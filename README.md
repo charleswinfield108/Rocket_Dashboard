@@ -1,12 +1,18 @@
-# RocketDash
+# Rocket Dash
 
-RocketDash is an internal Operations Dashboard built for Rocket Elevators to replace the manual spreadsheet-based workflows currently used by the operations team. The system consolidates years of elevator data collected across Ontario — covering licenses, inspections, incidents, and alterations — into a single, accessible interface. The initial release gives operations managers a fleet-level summary (total elevators, active units, overdue inspections) alongside a searchable table of every elevator's key details, including location, type, status, license expiry, and last inspection date. The project is structured to grow: a persistent sidebar supports future page additions, and the underlying data exploration confirms the dataset is clean and ready for production use.
+## Project Description
 
-## Directories
+Rocket Dash is a static prototype dashboard created to present Rocket Elevators' operational data to stakeholders for review. The project replaces a manual spreadsheet-based workflow by delivering a purpose-built interface where the client can assess the fleet at a glance: total elevator count, active units, and overdue inspections, alongside a searchable table showing each elevator's location, type, status, license expiry date, and last inspection record. A persistent sidebar is included to support future page additions as the product grows. The prototype also serves to validate that the underlying dataset is structured and complete enough for production use, giving stakeholders confidence in both the data and the proposed interface before further development begins.
+
+## Directory Listing
 
 | Directory | Contents |
 |-----------|----------|
-| `data/` | Raw source datasets exported from Rocket Elevators' records systems, including CSV and JSON files for licenses, inspections, incidents, alterations, installations, and orders. |
-| `docs/` | Project documentation, including stakeholder artifacts, AI interaction logs, and any written deliverables produced during development. |
-| `intelligence/` | Data exploration and analysis work — notebooks, scripts, and outputs used to validate the datasets and surface insights before the dashboard is built. |
-| `platform/` | The dashboard application itself — all front-end and back-end source code for the Operations Dashboard UI. |
+| `platform/` | HTML and front-end code |
+| `intelligence/` | Notebooks and Python scripts |
+| `data/` | Datasets |
+| `docs/` | Specs and reports |
+
+## Commit Description
+
+The first commit after the initial commit (`81b206b`) added the AI workflow baseline document to the `docs/` directory. This document captured a structured self-assessment of the developer's current AI toolset and workflow habits at the outset of the project. It covered which AI tools are in use (Claude Code, ChatGPT, Copilot, and Gemini), the specific use case for each, what a typical AI-assisted work session looks like, what is working well in the current approach, and what friction points exist. The purpose was to establish a baseline snapshot of AI usage practices before the project began, providing a reference point for evaluating how those practices evolve over the course of development.
