@@ -141,3 +141,59 @@ Claude identified that the card counts were hardcoded as static values, causing 
 Claude updated the Summary Cards section of `docs/dashboard_spec.md` to document the full interactivity: dynamic count calculation at load time, default selected state for Total Elevators, blue highlight styling for the selected card, single-selection behavior, per-card filter logic, and how the search input works in combination with the active card filter.
 
 **What I Would Change:**
+
+---
+
+## Entry 8 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> I want to update the summary cards to Total Elevators, Operational Elevators, Non-Operational Elevators, Overdue Inspections. Would this conflict with Task 5?
+
+**What Happened:**
+Claude explained that the dashboard update and Task 5 operate in completely separate parts of the project — the dashboard lives in `platform/` while Task 5 is a Jupyter notebook in `intelligence/`. No conflict exists. Claude noted that Task 5's classification task will define which license statuses are operational vs. non-operational, which could inform the dashboard cards. Two options were presented: update the dashboard now using best-judgment classifications, or complete Task 5 first to establish data-driven definitions before building the new cards. The user decided to finish dashboard tasks first and drill down on functionality afterward.
+
+**What I Would Change:**
+
+---
+
+## Entry 9 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> Update the summary cards to 4 with the following categories: Total Elevators, Operational Elevators, Non-Operational Elevators, Overdue Inspections.
+
+**What Happened:**
+Claude updated the summary cards from 3 to 4, changing the grid to `grid-cols-4`. The "Active Elevators" card was renamed to "Operational Elevators" (filtering to `DeviceStatus === "Active"`). A new "Non-Operational Elevators" card was added filtering to all elevators where `DeviceStatus` is not "Active", using an orange x-circle icon. All card counts and filter logic were updated accordingly.
+
+**Task 2**
+
+**Prompt:**
+> Add one more card that shows expired licence. Use a 3 column grid format and make the height of Total Elevators match two rows. Stack the remaining cards two on top of two.
+
+**What Happened:**
+Claude added an "Expired Licences" card with a purple ban icon, filtering to elevators where `licenseExpiry` is before today. The grid was restructured to 3 columns with Total Elevators spanning 2 rows on the left, and the four remaining cards arranged in a 2×2 grid in columns 2 and 3. The Total Elevators count number was increased to `text-6xl` to fill the taller card height. The `selectCard` function was updated to preserve `row-span-2` and `flex flex-col justify-between` classes on the Total Elevators card across state changes.
+
+**Task 3**
+
+**Prompt:**
+> Add a sorting feature to the Elevator Details table. Place it on the right side of the table header as a dropdown. Add all filterable labels to the options.
+
+**What Happened:**
+Claude added a "Sort by…" dropdown to the right side of the Elevator Details table header. Initial implementation included ascending and descending options per column, which was simplified after user feedback to just the six column labels (Elevator ID, Location, Type, Status, License Expiry, Last Inspection). Selecting a field sorts the table ascending by that field, in combination with the active card filter and search.
+
+**Task 4**
+
+**Prompt:**
+> In the license expiry column highlight the expired licenses in red.
+
+**What Happened:**
+Claude updated the `renderTable` function to check each elevator's `licenseExpiry` date against today. Expired dates are rendered in red bold text; valid dates remain in the default gray.
+
+**What I Would Change:**
