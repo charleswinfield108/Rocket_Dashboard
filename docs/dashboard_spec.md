@@ -12,15 +12,15 @@ The page is divided into two regions: a fixed left sidebar and a main content ar
 
 ### Sidebar (left, fixed width)
 
-The sidebar is always visible and contains the navigation menu. It displays the application name ("Rocket Elevators Dashboard") at the top, followed by a vertical list of page links. For this release there is one link: "Fleet Overview", which is the active/highlighted state by default. The sidebar is styled to make it clear that more links can be added here in the future.
+The sidebar is always visible and contains the navigation menu. It displays the application name ("Rocket Elevators Dashboard") at the top, followed by a vertical list of page links. For this release there is one link: "Dashboard", which is the active/highlighted state by default. The nav link uses a four-squares grid icon to its left. The sidebar is styled to make it clear that more links can be added here in the future.
 
 ### Main Content Area (right of sidebar)
 
 The main content area is organized top to bottom as follows:
 
-1. **Page heading** — The text "Fleet Overview" displayed as a prominent page title.
+1. **Header bar** — Spans the full width of the main content area. Left side contains a four-squares grid icon followed by the page title "Dashboard" in bold, with a subtext line directly beneath it reading "Rocket Dashboard — [Day of Week], [Month] [Day], [Year]" (e.g., "Rocket Dashboard — Thursday, May 14, 2026") at 10px font size in a muted gray color. Right side contains the search input for filtering the elevator table.
 2. **Summary Cards Row** — Three cards displayed side by side in a single horizontal row.
-3. **Table Section** — A search input above the detail table, followed by the full elevator detail table below it.
+3. **Table Section** — The full elevator detail table. No search input in this section — search has been moved to the header bar.
 
 ---
 

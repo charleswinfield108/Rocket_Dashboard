@@ -84,3 +84,28 @@ Claude created `platform/index.html` as a fully static prototype of the Fleet Ov
 
 **What I Would Change:**
 The prompt I submitted generated a good base for  the dashboard. It contained the required elements and delivered exactly what the prompt requested. In terms of additional functionality such as sorting the dashboard can be challenging to navigate. For instance, the client wants to be able to get a snapshot of data by  group such as active, inactive, expired liscence, TSSA Shutdown, and Customer Shutdown. A sort feature will be an excellent  addition.  It was not explained in the prompt and not intuitively administered. In addition Claude generated three summary cards and those cards represent total  elevators, active elevators, and expired liscences.  This is what the client requested but to make the dashboard more interactive the clards cn be clickable and sort the table on click.  Since those are the main pieces of data the client would like to use they should be easily and readily accessible.  Easch summary card only shows the total number of each respective subject. It could be beneficial to add "heads up" data such as 5 Elevators added in the last thirty days, or 5 licences to be added soon.  I am going to refine the prompt and spec doc to be more specific.  In addition I will add specific features to sections individually.  For instance summary cards should be clickable and sort the data in the table respectively.
+
+---
+
+## Entry 6 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> Currently the header reads Fleet Overview. Change Fleet Overview to Dashboard. Underneath the word Dashboard add a small sub text 10px that says Rocket Dashboard Day of the Week (Thursday), Month (May), Current Day (14), Year (2026). The text should be on the left of the dashboard. Add the same icon used in the navigation menu to the left of the word Dashboard. Change the icon in both the navigation menu and header to four squares. Move the search bar currently located on the table to the right side of the dashboard header. Add these specifications to the docs/dashboard_spec.md document.
+
+**What Happened:**
+Claude updated `platform/index.html` with all requested changes. The nav item icon was replaced with a four-squares grid icon and its label changed from "Fleet Overview" to "Dashboard". The header was rebuilt as a flex row: the left side now shows the grid icon alongside the "Dashboard" title and a 10px muted subtext reading "Rocket Dashboard — Thursday, May 14, 2026"; the right side holds the search input, relocated from the table section. The table section header was simplified to just the "Elevator Details" label. `docs/dashboard_spec.md` was updated to reflect the new nav label, grid icon usage, header layout, subtext format, and search bar placement.
+
+**Task 2**
+
+**Prompt:**
+> Add a magnifying glass inside of the search bar.
+
+**What Happened:**
+Claude wrapped the search input in a relative-positioned container and added a magnifying glass SVG icon absolutely positioned on the left interior of the input field. The input padding was adjusted to prevent text from overlapping the icon.
+
+**What I Would Change:**
+AI generated exactly what was requested in the prompt.  Typocally search bars have the magnifying glass as an icon and that was not added with the initial prompt, so I added it with a second prompt.  Other than that everything worked perfectly.
