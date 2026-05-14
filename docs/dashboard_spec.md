@@ -10,19 +10,26 @@ This document describes the layout, content, and data logic for the Rocket Eleva
 
 The page is divided into two regions: a fixed left sidebar and a main content area to its right. The full page height is fixed to the viewport with no body scroll; the main content area scrolls independently.
 
-### Sidebar (left, fixed width ~224px)
+### Sidebar (left, fixed width `w-56` / 224px)
 
-The sidebar is always visible and contains the navigation menu. It has a dark background (`bg-gray-900`). At the top is the application name "Rocket Elevators" in bold white text, separated from the nav links by a bottom border.
+The sidebar is always visible and does not scroll (`flex-shrink-0`). It has a dark background (`bg-gray-900`). At the top is the application name "Rocket Elevators" in bold white text (`text-lg font-bold`), separated from the nav links by a bottom border (`border-gray-700`).
 
-Navigation links are listed vertically. For this release there is one active link: **Dashboard**, which uses a four-squares grid icon to its left and is highlighted with a red background (`bg-red-600`). Below it are three placeholder links — Inspections, Incidents, and Alterations — each with a distinct icon and muted gray text. These are not functional in this prototype but are present to show the sidebar can accommodate future pages.
+Navigation links are listed vertically with a small gap between each. For this release there is one active link: **Dashboard**, highlighted with a red background (`bg-red-600`) and white text, using a **four-squares grid icon** to its left. Below it are three placeholder links in muted gray (`text-gray-400`) that highlight on hover:
+- **Inspections** — use a table/grid chart icon
+- **Incidents** — use an alert/warning circle icon
+- **Alterations** — use a pencil/edit icon
 
-At the very bottom of the sidebar is a version label: "v1.0 — Prototype" in small muted text, separated by a top border.
+Placeholder links are not functional in this prototype.
+
+At the very bottom of the sidebar is a version label "v1.0 — Prototype" in `text-xs text-gray-500`, separated from the nav area by a top border (`border-gray-700`).
+
+**Focus ring color for all inputs:** `focus:ring-red-500` (matches the brand red used in the sidebar active state).
 
 ### Main Content Area (right of sidebar)
 
 The main content area is organized top to bottom:
 
-1. **Header bar** — White background with a bottom border. Left side: a four-squares grid icon followed by the page title **"Dashboard"** in bold, with a subtext line directly beneath reading "Rocket Dashboard — [Day of Week], [Month] [Day], [Year]" (e.g., "Rocket Dashboard — Thursday, May 14, 2026") at 10px font size in muted gray. Right side: the search input field with a magnifying glass icon inside the left edge of the input.
+1. **Header bar** — White background with a bottom border. Left side: a four-squares grid icon (`text-gray-700`, `w-6 h-6`) followed by the page title **"Dashboard"** in `text-xl font-semibold`, with a subtext line directly beneath reading "Rocket Dashboard — [Day of Week], [Month] [Day], [Year]" (e.g., "Rocket Dashboard — Thursday, May 14, 2026") at `font-size: 10px` in muted gray (`text-gray-400`). The date in the subtext is **hardcoded as a static string** for this prototype — it does not update automatically. Right side: the search input field (`w-64`) with a magnifying glass icon (`w-4 h-4 text-gray-400`) absolutely positioned inside the left edge of the input, with left padding on the input (`pl-9`) to prevent text overlap.
 2. **Summary Cards Grid** — Five cards arranged in a 3-column CSS grid (see Summary Cards section for full layout).
 3. **Table Section** — White card containing the Elevator Details table with a sort dropdown in its header.
 
