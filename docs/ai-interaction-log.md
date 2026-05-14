@@ -109,3 +109,35 @@ Claude wrapped the search input in a relative-positioned container and added a m
 
 **What I Would Change:**
 AI generated exactly what was requested in the prompt.  Typocally search bars have the magnifying glass as an icon and that was not added with the initial prompt, so I added it with a second prompt.  Other than that everything worked perfectly.
+
+---
+
+## Entry 7 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> When the user first logs into the dashboard the Total Elevators Card should be highlighted. Currently, I am not in possession of the brand standard colors but we can use a light shade of blue with white and/or light gray text. All of the summary cards should be clickable and when a specific card is selected it should sort the table accordingly. If active elevators is selected, then only active elevators should be shown in the table.
+
+**What Happened:**
+Claude added click interactivity to all three summary cards. On load, the Total Elevators card is highlighted with a blue background and white text as the default selected state. Clicking any card highlights it in blue and filters the detail table to match — Total Elevators shows all records, Active Elevators shows only records with `DeviceStatus = "Active"`, and Overdue Inspections shows only records whose last inspection date is more than 12 months ago. Only one card can be selected at a time. The search bar continues to work in combination with the active card filter.
+
+**Task 2**
+
+**Prompt:**
+> Awesome! When I click on Overdue Inspections it shows a total of 7 elevators but the card says that there is 5.
+
+**What Happened:**
+Claude identified that the card counts were hardcoded as static values, causing a mismatch with the filter logic. All three card counts were updated to be computed dynamically from the data at load time. The Overdue Inspections card now correctly displays 7, matching the number of rows shown when that card is clicked.
+
+**Task 3**
+
+**Prompt:**
+> Update the docs/dashboard_spec.md file to show the behavior required for summary cards.
+
+**What Happened:**
+Claude updated the Summary Cards section of `docs/dashboard_spec.md` to document the full interactivity: dynamic count calculation at load time, default selected state for Total Elevators, blue highlight styling for the selected card, single-selection behavior, per-card filter logic, and how the search input works in combination with the active card filter.
+
+**What I Would Change:**

@@ -26,19 +26,34 @@ The main content area is organized top to bottom as follows:
 
 ## Summary Cards
 
-Three cards are displayed side by side. Each card shows a label and a large computed number.
+Three cards are displayed side by side. Each card shows a label and a large computed number. All counts are calculated dynamically from the data at load time so that the card values always match what the table filter produces.
+
+### Interactivity
+
+- All three cards are clickable.
+- On initial page load, the **Total Elevators** card is highlighted by default.
+- The highlighted (selected) card uses a blue background with white text. Unselected cards use a white background with their default text colors.
+- Clicking a card filters the detail table to show only the rows that correspond to that card's metric, and highlights that card as selected.
+- Only one card can be selected at a time. Selecting a new card deselects the previous one.
+- The search input works in combination with the active card filter — the table shows only rows that satisfy both the card filter and the search query simultaneously.
 
 ### Card 1 — Total Elevators
 - **Label:** Total Elevators
-- **Value:** Count of all unique Elevating Device Numbers present in `installed.json`.
+- **Icon:** Building icon, positioned in the top-right corner of the card. White when selected, gray when unselected.
+- **Value:** Count of all unique Elevating Device Numbers present in `installed.json`. Computed dynamically at load time.
+- **Filter behavior:** Shows all elevators in the table with no status filter applied.
 
 ### Card 2 — Active Elevators
 - **Label:** Active Elevators
-- **Value:** Count of records in `installed.json` where the `DeviceStatus` field equals `"Active"` (case-sensitive).
+- **Icon:** Check-circle icon, positioned in the top-right corner of the card. White when selected, green when unselected.
+- **Value:** Count of records in `installed.json` where the `DeviceStatus` field equals `"Active"` (case-sensitive). Computed dynamically at load time.
+- **Filter behavior:** Filters the table to show only elevators where `DeviceStatus` equals `"Active"`.
 
 ### Card 3 — Overdue Inspections
 - **Label:** Overdue Inspections
-- **Value:** Count of elevators where more than 12 months have passed since their last periodic inspection. To calculate: for each elevator, find the most recent record in `inspection.csv` where `InspectionType` equals `"ED-Periodic Inspection"`. If that record's `Latest_INSPECTION_Date` is more than 12 months before today's date, the elevator is considered overdue. Elevators with no periodic inspection record on file are also counted as overdue. Parse `Latest_INSPECTION_Date` from `M/D/YYYY` format before comparing.
+- **Icon:** Clock icon, positioned in the top-right corner of the card. White when selected, red when unselected.
+- **Value:** Count of elevators where more than 12 months have passed since their last periodic inspection. To calculate: for each elevator, find the most recent record in `inspection.csv` where `InspectionType` equals `"ED-Periodic Inspection"`. If that record's `Latest_INSPECTION_Date` is more than 12 months before today's date, the elevator is considered overdue. Elevators with no periodic inspection record on file are also counted as overdue. Parse `Latest_INSPECTION_Date` from `M/D/YYYY` format before comparing. Computed dynamically at load time.
+- **Filter behavior:** Filters the table to show only elevators whose last periodic inspection date is more than 12 months before today.
 
 ---
 
