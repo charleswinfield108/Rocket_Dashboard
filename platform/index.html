@@ -45,7 +45,7 @@
         <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
         <div>
           <h1 class="text-xl font-semibold text-gray-900 leading-tight">Dashboard</h1>
-          <p class="text-gray-400 leading-tight" style="font-size:10px;">Rocket Dashboard &mdash; Thursday, May 14, 2026</p>
+          <p id="headerDate" class="text-gray-400 leading-tight" style="font-size:10px;"></p>
         </div>
       </div>
       <div class="relative w-64">
@@ -53,7 +53,7 @@
         <input
           id="searchInput"
           type="text"
-          placeholder="Search by ID or location…"
+          placeholder="Search by ID, location, type, or status…"
           class="w-full border border-gray-300 rounded-md pl-9 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
           oninput="filterTable()"
         />
@@ -89,7 +89,7 @@
 
         <div id="card-inactive" onclick="selectCard('inactive')" class="cursor-pointer rounded-lg shadow-sm border p-5 bg-white border-gray-200">
           <div class="flex items-start justify-between">
-            <p id="label-inactive" class="text-sm font-medium text-gray-500">Inactive Elevators</p>
+            <p id="label-inactive" class="text-sm font-medium text-gray-500">Non-Active Elevators</p>
             <svg id="icon-inactive" class="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
           <p id="count-inactive" class="text-4xl font-bold text-orange-500 mt-3"></p>
@@ -122,12 +122,13 @@
 
         <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between gap-3">
           <h2 class="text-sm font-semibold text-gray-700 shrink-0">Elevator Details</h2>
+            <span id="resultsCount" class="text-xs text-gray-400 ml-2"></span>
           <div class="flex items-center gap-2 ml-auto">
             <div class="flex rounded-md border border-gray-300 overflow-hidden text-sm">
               <button id="btn-az" onclick="setSortBtn('az')" class="px-3 py-1.5 text-gray-600 hover:bg-gray-100">↑</button>
               <button id="btn-za" onclick="setSortBtn('za')" class="px-3 py-1.5 text-gray-600 border-l border-gray-300 hover:bg-gray-100">↓</button>
             </div>
-            <select id="sortSelect" onchange="applyFilters()" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
+            <select id="sortSelect" onchange="resetSortBtns(); applyFilters()" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
               <option value="">Sort by…</option>
               <option value="id">Elevator ID</option>
               <option value="location">Location</option>
@@ -214,6 +215,16 @@
 
     function setSortBtn(btn) {
       activeSortBtn = activeSortBtn === btn ? null : btn;
+      paintSortBtns();
+      applyFilters();
+    }
+
+    function resetSortBtns() {
+      activeSortBtn = null;
+      paintSortBtns();
+    }
+
+    function paintSortBtns() {
       ["az", "za"].forEach(b => {
         const el = document.getElementById(`btn-${b}`);
         if (b === activeSortBtn) {
@@ -222,13 +233,18 @@
           el.className = `px-3 py-1.5 text-gray-600 hover:bg-gray-100${b === "za" ? " border-l border-gray-300" : ""}`;
         }
       });
-      applyFilters();
     }
 
     function subData(subset) {
       const operational    = subset.filter(e => e.status === "Active").length;
       const nonOperational = subset.length - operational;
       return `${operational} Operational · ${nonOperational} Non-Operational`;
+    }
+
+    function nonActiveSubData(subset) {
+      const counts = {};
+      subset.forEach(e => { counts[e.status] = (counts[e.status] || 0) + 1; });
+      return Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(' · ');
     }
 
     let activeFilter = "all";
@@ -289,7 +305,10 @@
 
       if (query) {
         filtered = filtered.filter(e =>
-          String(e.id).includes(query) || e.location.toLowerCase().includes(query)
+          String(e.id).includes(query) ||
+          e.location.toLowerCase().includes(query) ||
+          e.type.toLowerCase().includes(query) ||
+          e.status.toLowerCase().includes(query)
         );
       }
 
@@ -312,6 +331,8 @@
       const noResults = document.getElementById("noResults");
       tbody.innerHTML = "";
 
+      document.getElementById("resultsCount").textContent = `Showing ${data.length} of ${elevators.length} elevators`;
+
       if (data.length === 0) {
         noResults.classList.remove("hidden");
         return;
@@ -322,6 +343,7 @@
         const statusClass = statusColors[e.status] || "bg-gray-100 text-gray-600";
         const licenseExpired = new Date(e.licenseExpiry) < new Date();
         const licenseClass = licenseExpired ? "text-red-600 font-medium" : "text-gray-600";
+        const inspectionClass = isOverdue(e.lastInspection) ? "text-red-600 font-medium" : "text-gray-600";
         const row = document.createElement("tr");
         row.className = "hover:bg-gray-50";
         row.innerHTML = `
@@ -332,7 +354,7 @@
             <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${statusClass}">${e.status}</span>
           </td>
           <td class="px-5 py-3 ${licenseClass}">${e.licenseExpiry}</td>
-          <td class="px-5 py-3 text-gray-600">${e.lastInspection}</td>
+          <td class="px-5 py-3 ${inspectionClass}">${e.lastInspection}</td>
         `;
         tbody.appendChild(row);
       });
@@ -355,11 +377,15 @@
 
     document.getElementById("sub-all").textContent      = subData(elevators);
     document.getElementById("sub-active").textContent   = subData(activeElevators);
-    document.getElementById("sub-inactive").textContent = subData(inactiveElevators);
+    document.getElementById("sub-inactive").textContent = nonActiveSubData(inactiveElevators);
     document.getElementById("sub-overdue").textContent  = subData(overdueElevators);
     document.getElementById("sub-expired").textContent  = subData(expiredElevators);
 
     renderTable(elevators);
+
+    document.getElementById("headerDate").textContent =
+      "Rocket Dashboard — " +
+      new Date().toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   </script>
 
 </body>
