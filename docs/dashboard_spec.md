@@ -6,6 +6,44 @@ This document describes the layout, content, and data logic for the Rocket Eleva
 
 ---
 
+## Design Philosophy
+
+The dashboard should feel like a premium enterprise product — comparable to Linear, Stripe, or Vercel — not a generic admin panel. Every design decision should serve readability and glanceability first.
+
+### Visual Hierarchy
+- Information should be scannable in under three seconds. The most critical metrics (card counts) must be the largest and most visually dominant elements on the page.
+- Use size, weight, and color intentionally to guide the eye: large bold counts → labeled card titles → supporting sub-data → table rows.
+- Avoid decorative elements that compete with data.
+
+### Color
+- Use a restrained accent palette. The brand red (`red-600`) is reserved for the active sidebar nav item and critical states (overdue, expired). It should not appear in neutral UI chrome.
+- Status colors (green, orange, red, purple) appear only in summary card counts and table badges — not in backgrounds, borders, or headers.
+- The body background uses a very light gray (`gray-50` or `gray-100`) to give cards visual lift without high contrast.
+- Dark text on light surfaces for primary data; muted gray for labels and secondary text.
+
+### Depth and Elevation
+- Summary cards and the table container use a soft box shadow (`shadow-sm` or `shadow`) with a white background to appear elevated above the page background.
+- No harsh borders on cards — use shadow for separation instead of thick outlines. A single thin border (`border border-gray-200`) is acceptable as a subtle edge.
+- Avoid stacked shadows or multiple border layers on the same element.
+
+### Spacing and Layout
+- Use consistent modular spacing throughout (`gap-5` between cards, `px-8 py-6` for the main content padding, `px-5 py-3` for table cells).
+- Card interiors use generous padding so numbers breathe — counts should never feel cramped.
+- Thin horizontal dividers (`border-gray-100` or `divide-gray-100`) separate table rows; they should recede visually, not draw attention.
+
+### Typography
+- Primary data (counts, IDs, dates) uses `font-mono` or a clean sans-serif with consistent sizing.
+- Card counts are the typographic focal point: `text-4xl` or larger, `font-bold`.
+- Labels and column headers use `text-xs` or `text-sm` in uppercase or muted gray to create visual separation from data.
+- No decorative fonts, no all-caps body text.
+
+### Interactivity
+- Interactive elements (cards, buttons, rows) use subtle hover states (`hover:bg-gray-50`, `hover:shadow-md`) — enough to communicate affordance without animation-heavy transitions.
+- The active card selection uses a solid fill color (blue) to clearly indicate state; all other cards revert to white.
+- Focus rings use the brand red to maintain color consistency.
+
+---
+
 ## Page Layout
 
 The page is divided into two regions: a fixed left sidebar and a main content area to its right. The full page height is fixed to the viewport with no body scroll; the main content area scrolls independently.
