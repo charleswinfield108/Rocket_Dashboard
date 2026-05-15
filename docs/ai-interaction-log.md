@@ -197,3 +197,35 @@ Claude added a "Sort by…" dropdown to the right side of the Elevator Details t
 Claude updated the `renderTable` function to check each elevator's `licenseExpiry` date against today. Expired dates are rendered in red bold text; valid dates remain in the default gray.
 
 **What I Would Change:**
+
+---
+
+## Entry 10 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> Update the docs/dashboard_spec.md file with the following: There will be 5 Summary Cards — Total Elevators, Active Elevators, Inactive Elevators, Overdue Inspections, Expired Licence. Each card will contain additional data showing how many elevators are operational and non-operational.
+
+**What Happened:**
+Claude updated `docs/dashboard_spec.md` to reflect the renamed cards (Active Elevators replacing Operational Elevators, Inactive Elevators replacing Non-Operational Elevators) and added a Sub-data section specifying that each card displays a secondary line in the format "X Operational · Y Non-Operational" for that card's filtered subset. The grid layout diagram and all five individual card descriptions were updated accordingly.
+
+**Task 2**
+
+**Prompt:**
+> Update the platform/index.html file with the new features for the summary cards. Reference docs/dashboard_spec.md for instructions.
+
+**What Happened:**
+Claude regenerated the summary cards in `platform/index.html` from the updated spec. Cards were renamed (Active Elevators, Inactive Elevators), all IDs and filter keys updated accordingly, and a `subData()` helper function was added to compute the operational breakdown for any subset of elevators. Each card received a sub-data `<p>` element displaying "X Operational · Y Non-Operational" in `text-xs` — white when the card is selected, muted gray when unselected. The `selectCard` function was updated to toggle sub-data text color alongside the other card elements.
+
+**Task 3**
+
+**Prompt:**
+> The sub data should reflect operational and non-operational.
+
+**What Happened:**
+Claude updated the `subData()` function in `platform/index.html` to use the labels "Operational" and "Non-Operational" instead of "Active" and "Inactive". The `docs/dashboard_spec.md` sub-data format, definition lines, and all five card descriptions were updated to match.
+
+**What I Would Change:**
