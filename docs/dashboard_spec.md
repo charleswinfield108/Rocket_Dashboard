@@ -122,15 +122,13 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 The table is contained in a white rounded card. Its header bar is a single flex row with three regions:
 
 - **Left:** "Elevator Details" label in small semibold gray text.
-- **Center:** Four sort direction buttons displayed side by side, to the left of the sort dropdown:
-  - **Latest** — sorts the table by `lastInspection` date descending (most recent first)
-  - **Oldest** — sorts the table by `lastInspection` date ascending (oldest first)
-  - **A→Z** — sorts the table by the field currently selected in the sort dropdown, ascending alphabetically/numerically
-  - **Z→A** — sorts the table by the field currently selected in the sort dropdown, descending alphabetically/numerically
+- **Center:** Two sort direction buttons displayed side by side, to the left of the sort dropdown:
+  - **↑** — sorts the table by the field selected in the dropdown, ascending (alphabetically for text, numerically for IDs, earliest-first for dates)
+  - **↓** — sorts the table by the field selected in the dropdown, descending (reverse alphabetical for text, numerically descending for IDs, latest-first for dates)
 
-  Buttons are small (`text-xs`), use a bordered style, and highlight with a dark background and white text when active. Only one button can be active at a time. Clicking an already-active button deactivates it and removes the sort direction. Sort direction buttons work in combination with the sort dropdown field, the active card filter, and the search input.
+  Buttons are small (`text-xs`), use a bordered style, and highlight with a dark background and white text when active. Only one button can be active at a time. Clicking an already-active button deactivates it and removes the sort direction. Buttons work in combination with the sort dropdown field, the active card filter, and the search input.
 
-- **Right:** A "Sort by…" dropdown. Selecting a field determines which column the direction buttons act on. Options: Elevator ID, Location, Type, Status, License Expiry, Last Inspection. When no direction button is active, selecting a field alone sorts ascending by default. Sorting works in combination with the active card filter and search.
+- **Right:** A "Sort by…" dropdown. Selecting a field determines which column the direction buttons act on. Options: Elevator ID, Location, Type, Status, License Expiry, Last Inspection. Sorting works in combination with the active card filter and search.
 
 ### Table Columns
 

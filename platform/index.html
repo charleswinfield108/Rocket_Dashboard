@@ -120,17 +120,23 @@
       <!-- Table Section -->
       <div class="bg-white rounded-lg shadow-sm border border-gray-200">
 
-        <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 class="text-sm font-semibold text-gray-700">Elevator Details</h2>
-          <select id="sortSelect" onchange="applyFilters()" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
-            <option value="">Sort by…</option>
-            <option value="id">Elevator ID</option>
-            <option value="location">Location</option>
-            <option value="type">Type</option>
-            <option value="status">Status</option>
-            <option value="licenseExpiry">License Expiry</option>
-            <option value="lastInspection">Last Inspection</option>
-          </select>
+        <div class="px-5 py-4 border-b border-gray-200 flex items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold text-gray-700 shrink-0">Elevator Details</h2>
+          <div class="flex items-center gap-2 ml-auto">
+            <div class="flex rounded-md border border-gray-300 overflow-hidden text-sm">
+              <button id="btn-az" onclick="setSortBtn('az')" class="px-3 py-1.5 text-gray-600 hover:bg-gray-100">↑</button>
+              <button id="btn-za" onclick="setSortBtn('za')" class="px-3 py-1.5 text-gray-600 border-l border-gray-300 hover:bg-gray-100">↓</button>
+            </div>
+            <select id="sortSelect" onchange="applyFilters()" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500">
+              <option value="">Sort by…</option>
+              <option value="id">Elevator ID</option>
+              <option value="location">Location</option>
+              <option value="type">Type</option>
+              <option value="status">Status</option>
+              <option value="licenseExpiry">License Expiry</option>
+              <option value="lastInspection">Last Inspection</option>
+            </select>
+          </div>
         </div>
 
         <div class="overflow-x-auto">
@@ -204,6 +210,21 @@
 
     const cardFilters = ["card-all", "card-active", "card-inactive", "card-overdue", "card-expired"];
 
+    let activeSortBtn = null;
+
+    function setSortBtn(btn) {
+      activeSortBtn = activeSortBtn === btn ? null : btn;
+      ["az", "za"].forEach(b => {
+        const el = document.getElementById(`btn-${b}`);
+        if (b === activeSortBtn) {
+          el.className = `px-3 py-1.5 bg-gray-800 text-white${b === "za" ? " border-l border-gray-300" : ""}`;
+        } else {
+          el.className = `px-3 py-1.5 text-gray-600 hover:bg-gray-100${b === "za" ? " border-l border-gray-300" : ""}`;
+        }
+      });
+      applyFilters();
+    }
+
     function subData(subset) {
       const operational    = subset.filter(e => e.status === "Active").length;
       const nonOperational = subset.length - operational;
@@ -273,13 +294,13 @@
       }
 
       const field = document.getElementById("sortSelect").value;
-      if (field) {
+
+      if (field && (activeSortBtn === "az" || activeSortBtn === "za" || !activeSortBtn)) {
+        const dir = activeSortBtn === "za" ? -1 : 1;
         filtered = [...filtered].sort((a, b) => {
           const aVal = field === "id" ? a[field] : (field === "licenseExpiry" || field === "lastInspection") ? new Date(a[field]) : a[field].toLowerCase();
           const bVal = field === "id" ? b[field] : (field === "licenseExpiry" || field === "lastInspection") ? new Date(b[field]) : b[field].toLowerCase();
-          if (aVal < bVal) return -1;
-          if (aVal > bVal) return 1;
-          return 0;
+          return aVal < bVal ? -dir : aVal > bVal ? dir : 0;
         });
       }
 
