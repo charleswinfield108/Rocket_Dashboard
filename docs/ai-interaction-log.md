@@ -51,6 +51,7 @@ I would not change anything for this prompt.  The output was accurate.
 Claude inspected the three relevant dataset files (`license.csv`, `inspection.csv`, `installed.json`) to identify available fields, data types, and distinct values before writing the spec. It confirmed that elevator type information lives in `installed.json` (field: `Device Type`) and that `DeviceStatus` in the same file is the source for active/inactive status. The resulting `docs/dashboard_spec.md` defined: a fixed left sidebar with navigation, a main content area with a page heading, three summary cards (Total Elevators, Active Elevators, Overdue Inspections), and a searchable detail table. Each table column was documented with its source file, source field name, data type, and display format. Join logic across all three data files was specified using the Elevating Device Number as the common key.
 
 **What I Would Change:**
+I would have read the business requirements document more thoroughly before writing this prompt. The spec was generated without the 12-month overdue inspection rule, which required a separate correction in Entry 4. Including all business rules in the initial prompt — rather than discovering omissions after the fact — would have produced a complete spec in one pass. In future spec tasks I will compile all business rules into a checklist before prompting.
 
 ---
 
@@ -67,6 +68,7 @@ Claude inspected the three relevant dataset files (`license.csv`, `inspection.cs
 Claude updated the Overdue Inspections card definition in `docs/dashboard_spec.md`. The original definition used license expiry date as the overdue criterion, which did not reflect the actual business rule. The updated definition specifies: find the most recent record per elevator in `inspection.csv` where `InspectionType` equals `"ED-Periodic Inspection"`; if that record's `Latest_INSPECTION_Date` is more than 12 months before today, the elevator is overdue. Elevators with no periodic inspection on file are also counted as overdue.
 
 **What I Would Change:**
+This entry exists entirely because of an omission in Entry 3. The business rule defining "overdue" was stated clearly in the requirements but was not included in the original spec prompt. I would not change how this correction was handled — Claude updated the spec accurately — but I would eliminate the need for this entry entirely by being more thorough when reading requirements before writing a spec. This is a good example of how a vague prompt creates rework.
 
 ---
 
@@ -108,7 +110,7 @@ Claude updated `platform/index.html` with all requested changes. The nav item ic
 Claude wrapped the search input in a relative-positioned container and added a magnifying glass SVG icon absolutely positioned on the left interior of the input field. The input padding was adjusted to prevent text from overlapping the icon.
 
 **What I Would Change:**
-AI generated exactly what was requested in the prompt.  Typocally search bars have the magnifying glass as an icon and that was not added with the initial prompt, so I added it with a second prompt.  Other than that everything worked perfectly.
+AI generated exactly what was requested in the prompt.  Typically search bars have the magnifying glass as an icon and that was not added with the initial prompt, so I added it with a second prompt.  Other than that everything worked perfectly.
 
 ---
 
@@ -141,6 +143,7 @@ Claude identified that the card counts were hardcoded as static values, causing 
 Claude updated the Summary Cards section of `docs/dashboard_spec.md` to document the full interactivity: dynamic count calculation at load time, default selected state for Total Elevators, blue highlight styling for the selected card, single-selection behavior, per-card filter logic, and how the search input works in combination with the active card filter.
 
 **What I Would Change:**
+The card count mismatch in Task 2 of this entry was a preventable bug. The initial prompt did not specify that card counts should be calculated dynamically from the data — it only described the visual behavior. As a result, Claude hardcoded the counts, which immediately became inconsistent with the filter output. In future prompts involving counts or metrics I will explicitly state "compute dynamically from the data" to prevent static values from being used. I would also have included the spec update request (Task 3) in the original prompt rather than as a follow-up.
 
 ---
 
@@ -157,6 +160,7 @@ Claude updated the Summary Cards section of `docs/dashboard_spec.md` to document
 Claude explained that the dashboard update and Task 5 operate in completely separate parts of the project — the dashboard lives in `platform/` while Task 5 is a Jupyter notebook in `intelligence/`. No conflict exists. Claude noted that Task 5's classification task will define which license statuses are operational vs. non-operational, which could inform the dashboard cards. Two options were presented: update the dashboard now using best-judgment classifications, or complete Task 5 first to establish data-driven definitions before building the new cards. The user decided to finish dashboard tasks first and drill down on functionality afterward.
 
 **What I Would Change:**
+I would have mapped out the dependencies between tasks before starting any implementation work. Task 5's classification output directly informs what the dashboard cards should be named and how they should filter — had I completed Task 5 first, the dashboard card definitions would have been data-driven rather than assumption-based. In future projects I will identify which tasks produce outputs that other tasks depend on, and sequence them accordingly.
 
 ---
 
@@ -197,6 +201,7 @@ Claude added a "Sort by…" dropdown to the right side of the Elevator Details t
 Claude updated the `renderTable` function to check each elevator's `licenseExpiry` date against today. Expired dates are rendered in red bold text; valid dates remain in the default gray.
 
 **What I Would Change:**
+This entry involved four separate prompts that could have been consolidated into two. The card restructuring (Tasks 1 and 2), the sort dropdown (Task 3), and the license expiry highlighting (Task 4) are all independent features. I could have included the sort dropdown and expiry highlighting requirements in the initial card restructuring prompt, reducing the number of back-and-forth exchanges. Going forward I will group related visual and behavioral changes into a single well-structured prompt rather than making incremental requests.
 
 ---
 
@@ -229,6 +234,7 @@ Claude regenerated the summary cards in `platform/index.html` from the updated s
 Claude updated the `subData()` function in `platform/index.html` to use the labels "Operational" and "Non-Operational" instead of "Active" and "Inactive". The `docs/dashboard_spec.md` sub-data format, definition lines, and all five card descriptions were updated to match.
 
 **What I Would Change:**
+The label correction in Task 3 was avoidable. The spec already used "Operational" and "Non-Operational" terminology — the prompt for Task 2 should have referenced those exact terms rather than allowing Claude to default to "Active" and "Inactive". I would have been more precise in the original implementation prompt, explicitly stating the sub-data labels rather than leaving that detail open to interpretation. This entry is a good example of how ambiguity in a prompt produces output that requires correction.
 
 ---
 
@@ -261,3 +267,82 @@ Claude explained that Latest/Oldest were tied to `lastInspection` regardless of 
 Claude updated `docs/dashboard_spec.md` to replace A→Z and Z→A labels with ↑ and ↓ arrows, noting they are direction-agnostic and work equally well for text, numbers, and dates. `platform/index.html` was updated to display ↑ and ↓ as the button labels.
 
 **What I Would Change:**
+This entry went through three iterations — four buttons reduced to two, then relabeled — because the initial prompt did not think through how sort direction buttons would behave across different data types. Latest/Oldest only made sense for dates, not for text columns, which made them misleading. I would have considered the full range of column types before specifying button labels. A better initial prompt would have described the intended behavior (sort the selected column in ascending or descending order) rather than prescribing specific labels, allowing Claude to suggest the most appropriate UI.
+
+---
+
+## Entry 12 — 2026-05-15
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 5 — Prompting Lab**
+
+**Prompt:**
+> Explain the three prompting techniques — zero-shot, few-shot, and chain-of-thought — and walk me through how to apply each one to the three data analysis tasks using the Ontario elevator license dataset.
+
+**What Happened:**
+Claude explained each technique in depth before writing anything into the notebook. Zero-shot was described as asking the question directly with no examples or reasoning instructions. Few-shot was described as embedding 2–3 examples of the desired output format inside the prompt before asking the question. Chain-of-thought was described as instructing the model to reason step by step before giving a final answer. Claude then walked through all three tasks (classification of LICENSE STATUS values, calculation of expired license percentage, and geographic distribution analysis) applying each technique individually. For each task, Claude explained what data to provide in the prompt and why, then wrote the prompt-output pairs into `intelligence/prompting_lab.ipynb`. After all nine pairs were completed, a comparison section was written identifying chain-of-thought as the strongest technique across all three tasks and few-shot as the technique that added the least value — with specific evidence from the outputs cited for each conclusion.
+
+**What I Would Change:**
+I would have started with a clearer understanding of what data to include in each prompt before beginning. Early in the task I was unsure whether to reference the CSV file by name or paste the actual values — understanding that Claude cannot read files directly and that the data must be provided in the prompt itself would have saved time. In future tasks I would inspect the dataset first, extract the relevant values, and have them ready before writing any prompts.
+
+---
+
+## Entry 13 — 2026-05-15
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 6 — License Dataset Analysis**
+
+**Prompt:**
+> Walk me through each question in Task 6 and write the solutions into intelligence/license_analysis.ipynb with working code and justifications.
+
+**What Happened:**
+Claude walked through all five questions before writing any code, explaining the purpose and procedure for each. For question (a), Claude loaded `data/license.csv` into a pandas DataFrame and tested both `ElevatingDevicesNumber` and `ElevatingDevicesLicenseNumber` for uniqueness using `nunique()`, confirming that `ElevatingDevicesNumber` was the correct primary key. For question (b), Claude used `str.split().str[-1]` and `str.split().str[-2]` to extract the country and province from the location string, confirming the majority of elevators are in Ontario, Canada. For question (c), Claude used `value_counts()` to examine all 11 LICENSE STATUS values and filtered the DataFrame to keep only ACTIVE (42,665 rows) and PENDING_RENEWAL (632 rows), justifying each kept and removed status by name with a specific reason. For question (d), Claude re-verified that `ElevatingDevicesNumber` remained unique after filtering and explained the scenario under which filtering could have broken uniqueness. For question (e), Claude parsed `LICENSEEXPIRYDATE` using `pd.to_datetime()`, grouped by year using `dt.year`, and produced a labeled bar chart with a data-derived time axis. The notebook was then executed from the terminal using `jupyter nbconvert` and ran without errors.
+
+**What I Would Change:**
+I initially did not understand that pandas was required and needed an explanation of what it is before proceeding. In future data analysis tasks I would familiarize myself with the required libraries beforehand so that setup time is reduced. I would also run the notebook sooner in the process rather than waiting until all five questions were complete — running after each section would catch errors earlier and confirm outputs before moving on.
+
+---
+
+## Summary
+
+This log covers 13 interactions with Claude (claude-sonnet-4-6) across Tasks 1, 5, and 6 of the RocketDash project. The interactions ranged from generating project documentation and building a static HTML dashboard to applying prompting techniques in a Jupyter notebook and performing data analysis on the Ontario elevator registry. Reviewing the entries as a whole reveals five consistent patterns — both in how AI tools were used effectively and where the approach fell short.
+
+---
+
+### Pattern 1 — Incomplete prompts caused the most rework
+
+The single most common source of extra work across this log was prompts that omitted key requirements. Entry 3 produced a dashboard spec missing the 12-month overdue inspection rule, requiring a full correction in Entry 4. Entry 7 produced hardcoded card counts because dynamic behavior was never specified. Entry 10 used incorrect labels because the exact terminology from the spec was not referenced in the prompt. In every case the AI did exactly what was asked — the problem was not the output but the input. Vague or incomplete prompts consistently produced outputs that required correction, which cost more time than writing a complete prompt would have.
+
+**Lesson:** Before submitting a prompt, treat it like a requirements document. Ask: what should the output look like? What business rules apply? What terminology should be used? What behavior is expected across all edge cases? The more specific the prompt, the fewer corrections are needed.
+
+---
+
+### Pattern 2 — Task dependencies were not planned upfront
+
+Entry 8 documents a moment where a dashboard update was almost made before completing Task 5, which would have produced card definitions based on assumptions rather than data. The operational vs. non-operational classification that Task 5 was designed to establish is exactly what the dashboard cards needed. Had the tasks been sequenced correctly — Task 5 first, then dashboard refinement — the card definitions would have been data-driven from the start. The same issue appears in Entry 3, where the dashboard spec was written before all business rules had been extracted from the requirements document.
+
+**Lesson:** Before beginning any task, identify which other tasks it depends on and which tasks depend on it. Build the dependency chain before touching the code or the prompts.
+
+---
+
+### Pattern 3 — Iterative refinement is a feature, not a failure
+
+Several entries show features being built in multiple passes — the sort buttons went through three iterations in Entry 11, the summary cards were updated across four separate entries, and the sub-data labels required correction after implementation. While some of these iterations were caused by incomplete prompts, others were the result of genuinely discovering better solutions through use. The ↑ and ↓ arrows were an improvement over A→Z and Z→A that only became obvious after seeing the buttons in context. This is normal when building with AI tools. The first version of something is rarely the final version. What matters is that each iteration is logged, reviewed, and reflected on.
+
+**Lesson:** Expect iteration. The goal is not to get it right in one prompt but to move toward the right solution efficiently. Logging each change makes the reasoning traceable and helps distinguish planning failures from genuine refinement.
+
+---
+
+### Pattern 4 — Asking for explanation before implementation improved understanding
+
+A consistent practice across Tasks 5 and 6 was asking Claude to explain concepts and procedures before writing any code or notebook content. This was applied to prompting techniques (Entry 12), pandas as a library (Entry 13), and each of the five license analysis questions individually. In every case, understanding the purpose and procedure first produced better prompts and more informed review of the outputs. This contrasts with earlier entries where prompts were submitted without fully understanding what the output would involve, leading to corrections and rework. The shift toward explanation-first interactions represents the most meaningful improvement in how the AI tool was used across the project.
+
+**Lesson:** When working in unfamiliar territory, ask for an explanation before asking for implementation. A two-step approach — understand, then build — consistently produced better results than jumping straight to output generation.
+
+---
+
+### Pattern 5 — The AI performed best when given a reference document
+
+The highest-quality outputs in this log came from prompts that referenced an existing specification. When `docs/dashboard_spec.md` was complete and cited as the source of truth, Claude produced accurate implementations with minimal correction. When the spec was incomplete or not referenced, outputs required rework. This points to a broader principle: AI tools are most effective when the context they are given is structured, complete, and accurate. Building a thorough spec document before implementation is not overhead — it is the most important input to any implementation prompt, and the single factor that most consistently determined whether a prompt succeeded or required correction.
