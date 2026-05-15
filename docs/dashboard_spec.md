@@ -64,11 +64,11 @@ All counts are computed dynamically from the data at load time so card values al
 
 Each card displays a secondary line of data below the main count, showing the operational breakdown of that card's subset. The format is:
 
-> **X Active · Y Inactive**
+> **X Operational · Y Non-Operational**
 
 Where:
-- **X Active** = count of elevators in that card's filtered set where `status === "Active"`
-- **Y Inactive** = count of elevators in that card's filtered set where `status !== "Active"`
+- **X Operational** = count of elevators in that card's filtered set where `status === "Active"`
+- **Y Non-Operational** = count of elevators in that card's filtered set where `status !== "Active"`
 
 This sub-data is displayed in small text (`text-xs`) beneath the main count number. When a card is selected (blue), the sub-data text is white. When unselected, it is muted gray (`text-gray-400`).
 
@@ -77,7 +77,7 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Icon:** Building icon, top-right of card. White when selected, gray when unselected.
 - **Count size:** `text-6xl` (larger than the other cards to fill the double-height space).
 - **Value:** Count of all records in the placeholder data array. Computed dynamically.
-- **Sub-data:** Active count and Inactive count across all elevators.
+- **Sub-data:** Operational count and Non-Operational count across all elevators.
 - **Filter behavior:** No filter — shows all elevators.
 - **Default state:** Selected (blue) on page load.
 
@@ -86,7 +86,7 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Icon:** Check-circle icon, top-right of card. White when selected, green when unselected.
 - **Count color (unselected):** Green (`text-green-600`).
 - **Value:** Count of elevators where `status === "Active"`. Computed dynamically.
-- **Sub-data:** Active count (same as main count) · Inactive count (0, since all are active — display regardless for consistency).
+- **Sub-data:** Operational count (same as main count) · Non-Operational count (0, since all are active — display regardless for consistency).
 - **Filter behavior:** Filters table to elevators where `status === "Active"`.
 
 ### Card 3 — Inactive Elevators
@@ -94,7 +94,7 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Icon:** X-circle icon, top-right of card. White when selected, orange when unselected.
 - **Count color (unselected):** Orange (`text-orange-500`).
 - **Value:** Count of elevators where `status !== "Active"`. Computed dynamically.
-- **Sub-data:** Active count (0) · Inactive count (same as main count — display for consistency).
+- **Sub-data:** Operational count (0) · Non-Operational count (same as main count — display for consistency).
 - **Filter behavior:** Filters table to elevators where `status !== "Active"`.
 
 ### Card 4 — Overdue Inspections
@@ -102,7 +102,7 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Icon:** Clock icon, top-right of card. White when selected, red when unselected.
 - **Count color (unselected):** Red (`text-red-600`).
 - **Value:** Count of elevators whose `lastInspection` date is more than 12 months before today. Computed dynamically.
-- **Sub-data:** Of the overdue elevators, how many are Active · how many are not Active.
+- **Sub-data:** Of the overdue elevators, how many are Operational · how many are Non-Operational.
 - **Filter behavior:** Filters table to elevators where `lastInspection` is more than 12 months before today.
 
 ### Card 5 — Expired Licences
@@ -110,7 +110,7 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Icon:** Ban/slash-circle icon, top-right of card. White when selected, purple when unselected.
 - **Count color (unselected):** Purple (`text-purple-600`).
 - **Value:** Count of elevators where `licenseExpiry` date is before today. Computed dynamically.
-- **Sub-data:** Of the expired-licence elevators, how many are Active · how many are not Active.
+- **Sub-data:** Of the expired-licence elevators, how many are Operational · how many are Non-Operational.
 - **Filter behavior:** Filters table to elevators where `licenseExpiry` is before today.
 
 ---
