@@ -229,3 +229,35 @@ Claude regenerated the summary cards in `platform/index.html` from the updated s
 Claude updated the `subData()` function in `platform/index.html` to use the labels "Operational" and "Non-Operational" instead of "Active" and "Inactive". The `docs/dashboard_spec.md` sub-data format, definition lines, and all five card descriptions were updated to match.
 
 **What I Would Change:**
+
+---
+
+## Entry 11 — 2026-05-14
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 1**
+
+**Prompt:**
+> Update the docs/dashboard_spec.md with the following: add sorting buttons in the header of the Elevator Details table to sort latest, oldest, A-Z, and Z-A. Add these buttons to the left of the sort dropdown.
+
+**What Happened:**
+Claude updated `docs/dashboard_spec.md` to document four sort direction buttons (Latest, Oldest, A→Z, Z→A) in the table header bar, positioned between the "Elevator Details" label and the sort dropdown. `platform/index.html` was then updated to implement the buttons with active-state highlighting and combined sort logic integrating with the dropdown, card filter, and search.
+
+**Task 2**
+
+**Prompt:**
+> The Latest and Oldest buttons seem to target only inspection dates which can be misleading. Let's drop Newest and Oldest. Update the spec first.
+
+**What Happened:**
+Claude explained that Latest/Oldest were tied to `lastInspection` regardless of dropdown context, making them confusing. The spec was updated to remove them, leaving only A→Z and Z→A. The HTML was then updated to match — removing the two buttons and simplifying the sort logic to a single direction-aware function.
+
+**Task 3**
+
+**Prompt:**
+> Would it make more sense to just have an up arrow and down arrow? Yes — update the spec first then the HTML.
+
+**What Happened:**
+Claude updated `docs/dashboard_spec.md` to replace A→Z and Z→A labels with ↑ and ↓ arrows, noting they are direction-agnostic and work equally well for text, numbers, and dates. `platform/index.html` was updated to display ↑ and ↓ as the button labels.
+
+**What I Would Change:**
