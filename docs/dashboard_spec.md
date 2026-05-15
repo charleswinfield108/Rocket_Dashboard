@@ -29,7 +29,7 @@ At the very bottom of the sidebar is a version label "v1.0 — Prototype" in `te
 
 The main content area is organized top to bottom:
 
-1. **Header bar** — White background with a bottom border. Left side: a four-squares grid icon (`text-gray-700`, `w-6 h-6`) followed by the page title **"Dashboard"** in `text-xl font-semibold`, with a subtext line directly beneath reading "Rocket Dashboard — [Day of Week], [Month] [Day], [Year]" (e.g., "Rocket Dashboard — Thursday, May 14, 2026") at `font-size: 10px` in muted gray (`text-gray-400`). The date in the subtext is **hardcoded as a static string** for this prototype — it does not update automatically. Right side: the search input field (`w-64`) with a magnifying glass icon (`w-4 h-4 text-gray-400`) absolutely positioned inside the left edge of the input, with left padding on the input (`pl-9`) to prevent text overlap.
+1. **Header bar** — White background with a bottom border. Left side: a four-squares grid icon (`text-gray-700`, `w-6 h-6`) followed by the page title **"Dashboard"** in `text-xl font-semibold`, with a subtext line directly beneath reading "Rocket Dashboard — [Day of Week], [Month] [Day], [Year]" at `font-size: 10px` in muted gray (`text-gray-400`). The date is **generated dynamically at load time** using JavaScript's `new Date()` with `toLocaleDateString('en-CA', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })` — it must not be a hardcoded string. Right side: the search input field (`w-64`) with a magnifying glass icon (`w-4 h-4 text-gray-400`) absolutely positioned inside the left edge of the input, with left padding on the input (`pl-9`) to prevent text overlap.
 2. **Summary Cards Grid** — Five cards arranged in a 3-column CSS grid (see Summary Cards section for full layout).
 3. **Table Section** — White card containing the Elevator Details table with a sort dropdown in its header.
 
@@ -89,12 +89,12 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 - **Sub-data:** Operational count (same as main count) · Non-Operational count (0, since all are active — display regardless for consistency).
 - **Filter behavior:** Filters table to elevators where `status === "Active"`.
 
-### Card 3 — Inactive Elevators
-- **Label:** Inactive Elevators
+### Card 3 — Non-Active Elevators
+- **Label:** Non-Active Elevators
 - **Icon:** X-circle icon, top-right of card. White when selected, orange when unselected.
 - **Count color (unselected):** Orange (`text-orange-500`).
 - **Value:** Count of elevators where `status !== "Active"`. Computed dynamically.
-- **Sub-data:** Operational count (0) · Non-Operational count (same as main count — display for consistency).
+- **Sub-data:** A breakdown of distinct non-active statuses and their counts, displayed as a comma-separated list (e.g., `2 TSSA Shutdown · 1 Customer Shutdown · 1 Undergoing Major Alt`). Only statuses that are present in the current dataset are shown. This replaces the Operational/Non-Operational format used on other cards.
 - **Filter behavior:** Filters table to elevators where `status !== "Active"`.
 
 ### Card 4 — Overdue Inspections
@@ -121,12 +121,12 @@ This sub-data is displayed in small text (`text-xs`) beneath the main count numb
 
 The table is contained in a white rounded card. Its header bar is a single flex row with three regions:
 
-- **Left:** "Elevator Details" label in small semibold gray text.
+- **Left:** "Elevator Details" label in small semibold gray text, followed by a results count in muted gray (`text-xs text-gray-400`) showing the number of rows currently displayed vs. total records — format: `"Showing X of Y elevators"`. This count updates any time the card filter, search, or sort changes.
 - **Center:** Two sort direction buttons displayed side by side, to the left of the sort dropdown:
   - **↑** — sorts the table by the field selected in the dropdown, ascending (alphabetically for text, numerically for IDs, earliest-first for dates)
   - **↓** — sorts the table by the field selected in the dropdown, descending (reverse alphabetical for text, numerically descending for IDs, latest-first for dates)
 
-  Buttons are small (`text-xs`), use a bordered style, and highlight with a dark background and white text when active. Only one button can be active at a time. Clicking an already-active button deactivates it and removes the sort direction. Buttons work in combination with the sort dropdown field, the active card filter, and the search input.
+  Buttons are small (`text-xs`), use a bordered style, and highlight with a dark background and white text when active. Only one button can be active at a time. Clicking an already-active button deactivates it and removes the sort direction. **When the sort dropdown field changes, the active sort direction button resets to inactive.** Buttons work in combination with the sort dropdown field, the active card filter, and the search input.
 
 - **Right:** A "Sort by…" dropdown. Selecting a field determines which column the direction buttons act on. Options: Elevator ID, Location, Type, Status, License Expiry, Last Inspection. Sorting works in combination with the active card filter and search.
 
@@ -141,7 +141,7 @@ One row per elevator. Data is placeholder — hardcoded JavaScript array of elev
 | 3 | Type | `type` | Text | Display as-is |
 | 4 | Status | `status` | Text | Displayed as a colored pill/badge (see Status Badge Colors) |
 | 5 | License Expiry | `licenseExpiry` | Date (YYYY-MM-DD) | Red bold text if date is before today; gray text otherwise |
-| 6 | Last Inspection | `lastInspection` | Date (YYYY-MM-DD) | Gray text |
+| 6 | Last Inspection | `lastInspection` | Date (YYYY-MM-DD) | Red bold text if date is more than 12 months before today (overdue); gray text otherwise |
 
 ### Status Badge Colors
 
@@ -165,7 +165,7 @@ One row per elevator. Data is placeholder — hardcoded JavaScript array of elev
 
 ## Search Input
 
-Located in the header bar, right side. Contains a magnifying glass icon inside the left edge of the input. Placeholder text: "Search by ID or location…". Filters table rows in real time — case-insensitive match against Elevator ID or Location. Works in combination with the active card filter and sort.
+Located in the header bar, right side. Contains a magnifying glass icon inside the left edge of the input. Placeholder text: "Search by ID, location, type, or status…". Filters table rows in real time — case-insensitive match against Elevator ID, Location, Type, and Status. Works in combination with the active card filter and sort.
 
 ---
 
