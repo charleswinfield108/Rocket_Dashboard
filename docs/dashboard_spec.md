@@ -241,3 +241,24 @@ Before dashboard development begins, the team must complete an initial explorati
 - Are the date values in `LICENSEEXPIRYDATE` consistently formatted and parseable?
 
 **Success criteria:** The exploration confirms that the key fields are sufficiently complete and consistent to display meaningful data in the dashboard. Any anomalies found should be noted in the notebook with a recommended handling approach.
+
+---
+
+## Data Model
+
+*Added: 2026-05-18*
+
+The dashboard operates on an **Elevator** entity assembled by joining three source datasets on `ElevatingDevicesNumber`. Each row in the detail table represents one physical elevator device.
+
+| Field | Data Type | Source Dataset | Source Column | Description |
+|---|---|---|---|---|
+| Elevator ID | Number | `license.csv` / `installed.json` | `ElevatingDevicesNumber` / `Elevating devices number` | Unique permanent identifier assigned to each physical elevator device. Primary join key across all datasets. |
+| Location | Text | `license.csv` | `LocationoftheElevatingDevice` | Full address string including street, city, postal code, province, and country. City/region is extracted as the token before the province code. |
+| Equipment Type | Text | `installed.json` | `Device Type` | Category of elevating device (e.g., Passenger Elevator, Freight Elevator, LULA Elevator, Observation Elevator). |
+| Device Status | Text | `installed.json` | `DeviceStatus` | Current operational status assigned by TSSA (e.g., Active, TSSA Shutdown, Customer Shutdown, Undergoing Major Alt). |
+| License Status | Text | `license.csv` | `LICENSESTATUS` | Administrative licence state (e.g., ACTIVE, PENDING_RENEWAL). Distinct from Device Status — an elevator can be physically Active but have a licence that is PENDING_RENEWAL. |
+| License Expiry Date | Date | `license.csv` | `LICENSEEXPIRYDATE` | Date the operating licence expires. Source format: `DD-MMM-YY` (e.g., `28-Apr-17`). Display format: `YYYY-MM-DD`. |
+| Last Inspection Date | Date | `inspection.csv` | `Latest_INSPECTION_Date` | Date of the most recent periodic inspection for this device. Derived by selecting the latest record per `ElevatingDevicesNumber`. |
+| Last Inspection Outcome | Text | `inspection.csv` | `InspectionOutcome` | Result of the most recent inspection (e.g., Satisfactory, Unsatisfactory, Conditional Pass). Sourced from the same record as Last Inspection Date. |
+
+> **Note:** License Status is used by the summary card filters but is not displayed as a standalone table column — Device Status is shown instead, as it reflects physical operability. Last Inspection Outcome is a data model field not currently in the table; add it to the Table Columns section if the operations manager needs it visible at a glance.
