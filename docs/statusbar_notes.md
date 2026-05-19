@@ -8,23 +8,27 @@
 
 ## Status Bar Values Explained
 
-The status bar produced by `scripts/statusline.sh` displays five values on a single line:
+The status bar produced by `scripts/statusline.sh` displays seven values on a single line:
 
-**`model`** — The Claude model currently handling the session (e.g., `claude-sonnet-4-6`). This confirms which model tier is being billed and what capability level is active.
+**`model`** — The Claude model currently handling the session, read from `model.id` (e.g., `claude-sonnet-4-6`). This confirms which model tier is being billed and what capability level is active.
 
-**`ctx`** — Context window usage as a percentage. Calculated as input tokens used divided by the model's maximum context window. When this approaches 100%, the session is near its limit and older context will begin to be compressed or dropped.
+**`ctx`** — Context window usage as a percentage, read from `context_window.used_percentage`. When this approaches 100%, the session is near its limit and older context will begin to be compressed or dropped.
 
-**`cost`** — Total session cost in USD, accumulated across all turns since the session started. This is a running total, not a per-turn cost.
+**`cost`** — Total session cost in USD, read from `cost.total_cost_usd`. This is a running total accumulated across all turns since the session started, not a per-turn cost.
 
-**`in`** — Input tokens consumed in the most recent turn. Includes the prompt, all conversation history, file contents read, and cached context loaded into the model.
+**`in`** — Total input tokens in the current context window, read from `context_window.total_input_tokens`. Includes the prompt, all conversation history, file contents read, and cached context loaded into the model.
 
-**`out`** — Output tokens generated in the most recent turn. Output tokens are priced at 5× the rate of input tokens, so a long code-generation response has an outsized effect on cost.
+**`out`** — Total output tokens from the most recent response, read from `context_window.total_output_tokens`. Output tokens are priced at 5× the rate of input tokens, so a long code-generation response has an outsized effect on cost.
+
+**`cache_read`** — Input tokens served from the cache this turn, read from `context_window.current_usage.cache_read_input_tokens`. These cost 90% less than standard input tokens.
+
+**`cache_write`** — Input tokens written to the cache for the first time this turn, read from `context_window.current_usage.cache_creation_input_tokens`. These are processed at full price and stored for reuse in future turns.
 
 ---
 
 ## Cache Tokens: Read vs. Creation
 
-Claude Code uses prompt caching to reduce cost on repeated context. Two token fields track how caching behaved in a given turn:
+Claude Code uses prompt caching to reduce cost on repeated context. Two fields inside `context_window.current_usage` track how caching behaved in a given turn:
 
 **`cache_creation_input_tokens`** — Tokens that were written into the cache for the first time. These tokens were processed at full input price and stored so they can be reused in future turns. A high value here means the session is building a cache — normal at the start of a conversation or after context changes significantly.
 
