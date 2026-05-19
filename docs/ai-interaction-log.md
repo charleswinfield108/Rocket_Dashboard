@@ -1,3 +1,5 @@
+# AND-101 Generative AI Fundamentals
+
 # AI Interaction Log
 
 This file records prompts submitted to AI tools and the outputs they produced during the development of RocketDash. Each entry notes the date, the tool used, the prompt, and a summary of the result.
@@ -346,3 +348,93 @@ A consistent practice across Tasks 5 and 6 was asking Claude to explain concepts
 ### Pattern 5 — The AI performed best when given a reference document
 
 The highest-quality outputs in this log came from prompts that referenced an existing specification. When `docs/dashboard_spec.md` was complete and cited as the source of truth, Claude produced accurate implementations with minimal correction. When the spec was incomplete or not referenced, outputs required rework. This points to a broader principle: AI tools are most effective when the context they are given is structured, complete, and accurate. Building a thorough spec document before implementation is not overhead — it is the most important input to any implementation prompt, and the single factor that most consistently determined whether a prompt succeeded or required correction.
+
+---
+
+## Entry 14 — AND-102, Task 3: Dynamic Dashboard with HTMX
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Read `docs/dashboard_spec.md` in full. Update it to reflect the interactive behavior introduced in Task 3 (AND-102). Make two additions:
+>
+> 1. Add a "Server Architecture" section (place it after the Design Philosophy section): The dashboard is no longer a static file. It is served by a Python Flask server at `platform/server.py`. The server loads `platform/elevator_fleet.csv` on startup and serves the dashboard at `/`. All table interactivity is handled by HTMX — the server returns HTML fragments, not JSON. There is no custom JavaScript for filtering or sorting.
+>
+> 2. Add a "Filters and Sorting" section (place it after the Detail Table section): Status Filter using `hx-get="/elevators?status=<value>"`. City Filter using `hx-get="/elevators?city=<value>"`. Sortable columns (Elevator ID and License Expiry Date) with ascending/descending toggle via query string parameters. The "Showing X of Y elevators" count updates with every fragment response. Keep all existing sections intact. Match the spec's existing formatting and tone.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** The task was specific and bounded — two clearly described sections with explicit content provided in the prompt. The existing spec file gave Claude the formatting context it needed by reading it. No examples were needed (few-shot) because the format was already present in the file, and no step-by-step reasoning was required (chain-of-thought) because the content of each section was fully specified upfront.
+
+**What Happened:**
+Claude read `docs/dashboard_spec.md` in full and added both sections as specified. The "Server Architecture" section was inserted after the Design Philosophy section and describes the Flask server at `platform/server.py`, the CSV loaded on startup, and the HTMX fragment pattern with no custom JavaScript. The "Filters and Sorting" section was inserted after the Detail Table section and documents the Status Filter, City Filter, sortable column behavior, combined query parameter handling, and the live "Showing X of Y" count update. All existing sections were preserved and the new content matched the spec's formatting and tone.
+
+**What I Would Change:**
+The prompt produced the correct output without correction. The zero-shot technique was the right choice — the prompt was detailed enough to fully specify the output without needing examples or reasoning steps. In future spec update prompts I would continue this pattern: read the file first, state exactly where each section goes, and describe the content precisely enough that no interpretation is required.
+
+---
+
+## Entry 15 — AND-102, Task 3: Data Preparation Script
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Write a Python script at `platform/prepare_data.py` that reads `data/license.csv` and produces a cleaned output file at `platform/elevator_fleet.csv`.
+>
+> Apply the same filtering from Task 6c: keep only rows where `LICENSESTATUS` is `ACTIVE` or `PENDING_RENEWAL`. All other status values should be excluded.
+>
+> The output CSV must include only these four columns, renamed as shown: `ElevatingDevicesNumber` → `elevator_id`, `LocationoftheElevatingDevice` → `location`, `LICENSESTATUS` → `license_status`, `LICENSEEXPIRYDATE` → `license_expiry`.
+>
+> Parse `LICENSEEXPIRYDATE` using pandas and write `license_expiry` in `YYYY-MM-DD` format. The script must be runnable from the command line with `python platform/prepare_data.py`. Print a confirmation line on completion showing the row count written.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** The task was fully specified — exact file paths, known filtering logic from Task 6c, an explicit column mapping table, a defined date output format, and a required confirmation message. The data was already well understood from Module 1 Task 6 analysis. No examples or step-by-step reasoning were needed; a direct instruction was sufficient.
+
+**What Happened:**
+Claude checked the `platform/` directory and confirmed `data/license.csv` column names before writing the script. `platform/prepare_data.py` was created using pandas: reads `data/license.csv`, filters to `ACTIVE` and `PENDING_RENEWAL` rows, parses `LICENSEEXPIRYDATE` from `DD-MMM-YY` format using `pd.to_datetime()` with `format="%d-%b-%y"`, renames the four columns, and writes `platform/elevator_fleet.csv`. The script uses `pathlib.Path(__file__)` so it resolves the correct file paths regardless of where it is called from. Running `python3 platform/prepare_data.py` completed without errors and printed `Written 43297 rows to platform/elevator_fleet.csv`. The output CSV was verified to have the correct four-column structure with dates in `YYYY-MM-DD` format.
+
+**What I Would Change:**
+The prompt produced the correct output without correction. One improvement would be to specify the source date format (`DD-MMM-YY`) explicitly in the prompt — Claude inferred it correctly from inspecting the file, but stating it upfront would make the prompt self-contained and reduce the chance of a parsing error on a different dataset.
+
+---
+
+## Entry 16 — AND-102, Task 3: Flask Server (Part B)
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Create a Python Flask server at `platform/server.py`. Load `platform/elevator_fleet.csv` into a pandas DataFrame on startup and extract a `city` column from the location string using `split()[-5]`. Move `platform/index.html` to `platform/templates/index.html`. Serve the dashboard at `GET /`. Expose `GET /elevators` accepting `status`, `city`, `sort`, and `order` query parameters — apply all active filters and sort together, return a `<tbody>` HTML fragment with one `<tr>` per matching elevator, and include `X-Total-Count` and `X-Filtered-Count` response headers. Match the existing badge and date-highlight styling from the current HTML. Update `CLAUDE.md` to reflect the server-driven architecture, Flask and HTMX in the tech stack, the updated `platform/` directory description, and a conventions entry for the Flask server and HTMX fragment pattern.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** All components were fully specified — file paths, DataFrame setup, city extraction method, route signatures, query parameter names, response format, header names, and every CLAUDE.md change required. No examples or reasoning steps were needed; the instructions were complete enough to produce the correct output directly.
+
+**What Happened:**
+Claude read `platform/index.html` in full to match the existing table row structure and badge styling before writing any code. `platform/server.py` was created with Flask: loads `platform/elevator_fleet.csv` on startup, parses `license_expiry` as datetime, extracts `city` using `split()[-5].title()`, and defines `CITIES` and `STATUSES` lists for dropdown population in Part C. The `GET /` route renders `templates/index.html` passing `cities` and `statuses`. The `GET /elevators` route applies status, city, and sort filters, builds an HTML `<tbody>` fragment with matching row styling (green badge for ACTIVE, yellow for PENDING_RENEWAL, red date text for expired licences), appends an `hx-swap-oob` results count span, and returns `X-Total-Count` and `X-Filtered-Count` headers. Flask was not installed on the system; it was installed with `--break-system-packages` before the server could run. The server was verified: `/elevators?status=ACTIVE&sort=elevator_id&order=asc` returned a correctly formatted HTML fragment, and `/elevators?city=Toronto` returned headers showing 43,297 total and 12,185 filtered rows. `platform/index.html` was moved to `platform/templates/index.html`. `CLAUDE.md` was updated with the server-driven description, Flask and HTMX in the tech stack, updated `platform/` directory entry, and two new convention lines.
+
+**What I Would Change:**
+The Flask installation was not anticipated in the prompt — specifying "ensure Flask is installed before running" or checking for it upfront would have avoided the install step interrupting the verification. I would also have explicitly stated that `license_status` in the real CSV uses uppercase values (ACTIVE, PENDING_RENEWAL) rather than the mixed-case values in the placeholder data, so badge color definitions would have been correct on the first pass without needing to infer from the data.
+
+---
+
+## Entry 17 — AND-102, Task 3: HTMX Interactivity (Part C)
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Update `platform/templates/index.html` and `platform/server.py` to add full HTMX interactivity. Think through how filter state, sort state, and HTMX requests interact before writing any code, then implement. Add HTMX CDN. Replace the sort controls with a `<form id="filters">` containing Status and City dropdowns and two hidden sort-state inputs. Convert the Elevator ID and License Expiry column headers into HTMX-triggering buttons using `hx-vals='{"clicked_sort": "..."}` and `hx-include="#filters"`. Add `hx-trigger="load"` to the table for initial population. Update `/elevators` in `server.py` to resolve sort toggle logic using `clicked_sort` vs. the current `sort` hidden input — flip order if same column, reset to `asc` if different. Append five `hx-swap-oob` elements to every response: results count, `sort-field` input, `sort-order` input, and both sort header buttons with updated icons. Remove the hardcoded `elevators` array and all JS filter/render functions; keep the summary card visual state JS.
+
+**Prompting Technique:** Chain-of-thought
+
+**Why Chain-of-thought:** Part C involved three interlocking systems — the filter form state, the sort toggle state, and the server's oob responses — that all had to be consistent. A direct instruction risked producing HTMX attributes that conflicted with the form field names or sort toggle logic that didn't match what the hidden inputs sent. Asking Claude to reason through the interaction before writing code ensured the `clicked_sort` / `sort` / `order` parameter flow was coherent end-to-end before any code was written.
+
+**What Happened:**
+Claude reasoned through the full state flow before implementing: a filter dropdown change fires the form's `hx-get` including all hidden fields; a column header click sends `clicked_sort` via `hx-vals` plus all form fields via `hx-include`; the server compares `clicked_sort` to the current `sort` hidden value to determine whether to flip or reset the order. Both files were then updated. `platform/templates/index.html` received the HTMX CDN script, the filter form with Status and City dropdowns populated from Jinja `statuses` and `cities` variables, two hidden inputs for sort state, sortable column header buttons with `↕` indicators, `hx-trigger="load"` on the table element, and the simplified card-only JavaScript. The hardcoded placeholder array and all JS filter/render functions were removed. Card counts were replaced with Jinja template variables (`{{ total }}`, `{{ active }}`, `{{ inactive }}`, `{{ expired }}`). `platform/server.py` was updated with `clicked_sort` toggle logic, search (`q`) support wired to the search input, and five oob elements in every `/elevators` response. Verified: the `GET /` route served the template with HTMX loaded; `/elevators` returned 43,297 rows on load; `status=PENDING_RENEWAL` filtered to 632; `city=Toronto` filtered to 12,185; each response contained 5 `hx-swap-oob` elements.
+
+**What I Would Change:**
+The sort icon update via oob-swapped buttons was the most complex part and required careful reasoning about the state flow. I would document this pattern — `clicked_sort` as a separate param distinct from the hidden `sort` field — in `CLAUDE.md` so it doesn't need to be re-derived in future sessions. I would also have wired the search input to HTMX from the start of the prompt rather than relying on Claude to infer it as a natural extension.
+
+---
+
+# AND-102 Business Document

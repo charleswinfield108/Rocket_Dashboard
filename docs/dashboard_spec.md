@@ -44,6 +44,17 @@ The dashboard should feel like a premium enterprise product — comparable to Li
 
 ---
 
+## Server Architecture
+
+The dashboard is no longer served as a static file. It is served by a Python Flask server located at `platform/server.py`.
+
+- The server loads `platform/elevator_fleet.csv` on startup. This file contains cleaned license data prepared by `platform/prepare_data.py`.
+- The main dashboard page is served at `/`.
+- All table interactivity is handled by HTMX. The server exposes endpoints that return HTML fragments for HTMX to swap into the page — they do not return JSON.
+- There is no custom JavaScript for filtering or sorting. All dynamic behavior is driven exclusively by HTMX attributes (`hx-get`, `hx-target`, `hx-swap`).
+
+---
+
 ## Page Layout
 
 The page is divided into two regions: a fixed left sidebar and a main content area to its right. The full page height is fixed to the viewport with no body scroll; the main content area scrolls independently.
@@ -198,6 +209,26 @@ One row per elevator. Data is placeholder — hardcoded JavaScript array of elev
 - No pagination — all matching rows are shown.
 - Rows have a subtle hover background.
 - If no rows match the active filters, display a "No elevators match your search." message centered below the table headers.
+
+---
+
+## Filters and Sorting
+
+### Status Filter
+
+A dropdown in the table header bar that filters the table by Device Status. Options: **All**, **Active**, **TSSA Shutdown**, **Customer Shutdown**, **Undergoing Major Alt**. Selecting a value sends a request to the server using `hx-get="/elevators?status=<value>"`, targets the table body, and swaps in the returned HTML fragment. Selecting "All" removes the status filter and returns all rows.
+
+### City Filter
+
+A dropdown in the table header bar that filters the table by city. City is extracted from the Location field as the token immediately before the province code. Options are populated from the distinct cities present in `platform/elevator_fleet.csv`, plus an "All Cities" option. Selecting a value sends a request using `hx-get="/elevators?city=<value>"`, targets the table body, and swaps in the returned HTML fragment.
+
+### Sortable Columns
+
+The **Elevator ID** and **License Expiry Date** column headers are clickable. Clicking a header sorts the table by that column ascending. Clicking the same header again reverses the sort to descending. Sort state is passed to the server as query string parameters (e.g., `sort=id&order=asc`). The server applies all active filter and sort parameters together in a single request and returns the updated table fragment.
+
+### Combined Behavior
+
+All filters and sorting operate simultaneously. Every HTMX request to `/elevators` carries the full current state — active status filter, active city filter, and active sort — as query parameters. The server applies all parameters and returns the appropriate filtered, sorted table fragment. The "Showing X of Y elevators" count in the table header is included in every fragment response and updates automatically on each swap.
 
 ---
 
