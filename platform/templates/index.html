@@ -79,27 +79,27 @@
           </div>
           <div>
             <p id="count-all" class="text-5xl font-bold tracking-tight text-white mt-2">{{ total }}</p>
-            <p id="sub-all" class="text-xs text-white/50 mt-2 leading-relaxed"></p>
+            <p id="sub-all" class="text-xs text-white/50 mt-2 leading-relaxed">{{ sub_all }}</p>
           </div>
         </div>
 
         <!-- Row 1 -->
         <div id="card-active" onclick="selectCard('active')" class="cursor-pointer rounded-xl border border-gray-100 shadow-sm p-5 bg-white transition-all duration-150 hover:shadow-md">
           <div class="flex items-start justify-between">
-            <p id="label-active" class="text-xs font-semibold uppercase tracking-wide text-gray-400">Active</p>
+            <p id="label-active" class="text-xs font-semibold uppercase tracking-wide text-gray-400">Active Elevators</p>
             <svg id="icon-active" class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
           <p id="count-active" class="text-3xl font-bold tracking-tight text-green-600 mt-3">{{ active }}</p>
-          <p id="sub-active" class="text-xs text-gray-400 mt-1.5 leading-relaxed"></p>
+          <p id="sub-active" class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ sub_active }}</p>
         </div>
 
         <div id="card-inactive" onclick="selectCard('inactive')" class="cursor-pointer rounded-xl border border-gray-100 shadow-sm p-5 bg-white transition-all duration-150 hover:shadow-md">
           <div class="flex items-start justify-between">
-            <p id="label-inactive" class="text-xs font-semibold uppercase tracking-wide text-gray-400">Non-Active</p>
+            <p id="label-inactive" class="text-xs font-semibold uppercase tracking-wide text-gray-400">Inactive Elevators</p>
             <svg id="icon-inactive" class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
           <p id="count-inactive" class="text-3xl font-bold tracking-tight text-orange-500 mt-3">{{ inactive }}</p>
-          <p id="sub-inactive" class="text-xs text-gray-400 mt-1.5 leading-relaxed"></p>
+          <p id="sub-inactive" class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ sub_inactive }}</p>
         </div>
 
         <!-- Row 2 -->
@@ -108,8 +108,8 @@
             <p id="label-overdue" class="text-xs font-semibold uppercase tracking-wide text-gray-400">Overdue Inspections</p>
             <svg id="icon-overdue" class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           </div>
-          <p id="count-overdue" class="text-3xl font-bold tracking-tight text-red-600 mt-3">—</p>
-          <p id="sub-overdue" class="text-xs text-gray-400 mt-1.5 leading-relaxed"></p>
+          <p id="count-overdue" class="text-3xl font-bold tracking-tight text-red-600 mt-3">{{ overdue }}</p>
+          <p id="sub-overdue" class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ sub_overdue }}</p>
         </div>
 
         <div id="card-expired" onclick="selectCard('expired')" class="cursor-pointer rounded-xl border border-gray-100 shadow-sm p-5 bg-white transition-all duration-150 hover:shadow-md">
@@ -118,7 +118,7 @@
             <svg id="icon-expired" class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
           </div>
           <p id="count-expired" class="text-3xl font-bold tracking-tight text-purple-600 mt-3">{{ expired }}</p>
-          <p id="sub-expired" class="text-xs text-gray-400 mt-1.5 leading-relaxed"></p>
+          <p id="sub-expired" class="text-xs text-gray-400 mt-1.5 leading-relaxed">{{ sub_expired }}</p>
         </div>
 
       </div>

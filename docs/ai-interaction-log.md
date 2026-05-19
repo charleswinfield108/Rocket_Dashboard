@@ -657,3 +657,119 @@ The first /compact discarded the inspection.csv findings from the initial four-d
 
 ---
 
+## Entry 21 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — NLP Analysis of Incident Narratives
+
+---
+
+**Prompt:**
+> Load data/incident.json into a pandas DataFrame in a new notebook at intelligence/nlp_analysis.ipynb. Add a header cell: `## AND-102 Task 6: NLP Analysis of Incident Narratives`. Examine the "Reported occurrence narrative" column: How many non-null values are there? What is the mean and median word count per narrative? Print the findings clearly.
+
+**Prompting Technique:** Zero-shot with explicit output specification
+
+**Why Zero-shot:** The task was fully specified — file path, notebook path, header text, column name, and the exact metrics to compute. No reasoning chain or examples were needed. The output format was dictated directly in the prompt ("Print the findings clearly"), and the column name was given verbatim to prevent ambiguity.
+
+**What Happened:**
+Claude previewed `incident.json` to confirm the column name `"Reported occurrence narrative"` and the file structure before writing the notebook. A two-cell notebook was created: one code cell to load the JSON into a DataFrame, and one to compute and print the three metrics. The notebook executed cleanly. Findings: 2,445 of 2,446 rows have a non-null narrative (only 1 missing), mean word count is 12.6, and median word count is 12.0. The near-complete coverage and tight mean/median gap indicate narratives are consistently short, formulaic descriptions rather than free-form text.
+
+**What I Would Change:**
+The prompt was efficient and produced the correct output. For a more useful first look, I would have added a request to print the top 5 most common narrative lengths and a sample of the shortest and longest narratives — this would immediately show whether any rows are near-empty strings or unusually long outliers, which matters before applying any NLP tokenization in later steps.
+
+---
+
+## Entry 22 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6) — subagent
+
+**Task:** AND-102, Task 6 — NLP Library / Approach Decision
+
+---
+
+**Prompt:**
+> Launch a subagent before making any library decisions. This keeps library docs, comparison tables, and exploration output out of your main session context.
+>
+> I need to choose an NLP approach for ~2,400 short elevator incident narratives (~20–50 words each). Compare these two options:
+> 1. Topic modeling with LDA (sklearn or gensim)
+> 2. TF-IDF vectorization + K-Means clustering (sklearn)
+>
+> For each: describe what it does in one sentence, how well it handles short texts, and one key limitation for this dataset. End with a recommendation and one sentence of reasoning. No code.
+
+**Prompting Technique:** Subagent delegation with explicit output constraint
+
+**Why a subagent:** The comparison would have pulled library documentation, co-occurrence explanations, and comparison tables into the main session. Delegating to a subagent kept that research out of the working context so that only the actionable recommendation returned to the main session.
+
+**What the Subagent Found:**
+- **LDA** suffers on short texts because 20–50 word documents do not generate enough word co-occurrence signal for stable topic inference. The domain-specific vocabulary (door, cable, failed, inspection) causes topics to bleed into each other rather than separate cleanly.
+- **TF-IDF + K-Means** handles short texts better because TF-IDF is purely frequency-based and does not require co-occurrence patterns. The main limitation is that K-Means assumes spherical clusters of roughly equal size, which may absorb rare but distinct incident types into larger clusters.
+- **Recommendation:** TF-IDF + K-Means. At 2,400 documents averaging 30–40 words, the corpus is too small and sparse for LDA to estimate stable distributions. TF-IDF + K-Means will produce more interpretable, reproducible clusters with less tuning effort.
+
+**Decision:** TF-IDF + K-Means (sklearn). Implementation will proceed in `intelligence/nlp_analysis.ipynb`.
+
+**What I Would Change:**
+The subagent prompt was well-scoped. One addition that would have been useful: asking for a recommended value of K (number of clusters) or a method for choosing it — for example, the elbow method or silhouette score — so that the implementation prompt could specify K directly rather than requiring a separate tuning step.
+
+---
+
+## Entry 23 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — Add markdown explanation cell to `intelligence/nlp_analysis.ipynb`
+
+---
+
+**Prompt:**
+> Add a markdown cell in the notebook explaining in 3–5 sentences:
+> - Which technique I chose and why
+> - Why it fits short incident narratives better than the alternative
+> - Which library I used
+
+**Prompting Technique:** Implicit context continuation
+
+**Why this technique:** The approach decision had already been logged in Entry 22 and the cleaned_narrative column was in place. Referring to "the technique I chose" without restating the choice let the prompt stay concise — Claude held the relevant context from earlier in the session and applied it directly.
+
+**What Happened:**
+Claude read the notebook's cell structure, appended a markdown cell explaining TF-IDF + K-Means (scikit-learn), and re-executed the notebook to verify no regressions. The cell covers: why TF-IDF + K-Means was chosen, why LDA was unsuitable for ~12-word post-cleaning documents due to sparse co-occurrence signal, and a preview of what the five clusters are expected to surface.
+
+**What I Would Change:**
+Nothing significant. The prompt was compact and the output matched the brief exactly. If I were writing it again I might add "position the cell immediately before the clustering code" to be explicit about placement, though in practice appending it after preprocessing made logical sense.
+
+---
+
+## Entry 24 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — Cluster size chart with named themes + operations summary + full notebook execution
+
+---
+
+**Prompts (this session covered three sequential tasks):**
+
+> Create one chart visualizing the results (topic word distribution or cluster sizes). Label all axes, add a title. Save to assets/incident_topic_distribution.png.
+
+> Wait, what are the themes, can you name them accordingly?
+
+> Write a 5–8 sentence paragraph summarizing findings for a non-technical operations manager. Name the most common incident types, identify at least one pattern the team should act on, and note any surprising finding.
+
+> Run Restart Kernel and Run All. Fix any errors. Log completion in the AI Interaction Log.
+
+**Prompting Technique:** Iterative refinement across short follow-up prompts
+
+**Why this technique:** Each prompt built on the previous output rather than specifying everything upfront. The chart was generated first with generic labels, then a single follow-up ("name them accordingly") upgraded the labels to meaningful theme names without rewriting the whole prompt. This is more efficient than front-loading every detail — you can evaluate the output at each step and adjust only what needs changing.
+
+**What Happened:**
+- Appended a TF-IDF + K-Means clustering cell and a matplotlib bar chart cell to the notebook; `scikit-learn` was not installed and was added with `pip install --break-system-packages`.
+- Executed the notebook; five clusters emerged cleanly: General Injuries & Falls (908), Door Strike Injuries (567), Hoistway Water Damage (363), Level Misalignment & Trip Hazards (311), Pit Flooding & Sump Pump Failure (296).
+- A follow-up prompt replaced generic "Cluster 0–4" axis labels with the five theme names; chart saved to `assets/incident_topic_distribution.png`.
+- Written a non-technical findings paragraph and saved it as `docs/incident_analysis_summary.md` with a breakdown table and embedded chart.
+- Final "Restart Kernel and Run All" executed cleanly with no errors.
+
+**What I Would Change:**
+Specifying the axis label style ("use theme names, not cluster numbers") in the original chart prompt would have avoided the follow-up round-trip. The iterative approach worked fine here, but for a deliverable going straight to a client the first prompt should include all formatting requirements.
+
+---
+
