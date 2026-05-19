@@ -351,6 +351,9 @@ The highest-quality outputs in this log came from prompts that referenced an exi
 
 ---
 
+# AND-102 Context Engineering
+---
+
 ## Entry 14 — AND-102, Task 3: Dynamic Dashboard with HTMX
 
 **Tool:** Claude (claude-sonnet-4-6)
@@ -437,4 +440,30 @@ The sort icon update via oob-swapped buttons was the most complex part and requi
 
 ---
 
-# AND-102 Business Document
+## Entry 18 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AI Interaction Log — Session Opening
+
+**Prompt 1:**
+> `/clear`
+
+**Prompt 2:**
+> Log Entry into docs/ai-interaction-log.md
+
+**Prompt 3:**
+> Log a new entry following the protocol include the /clear request
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** Each prompt was a direct instruction with no examples or reasoning steps required. The requests were brief and assumed Claude would infer the format from the existing log.
+
+**What Happened:**
+The session opened with a `/clear` command, which wiped the prior conversation context. The user then opened `docs/ai-interaction-log.md` in the IDE and issued a bare instruction to log a new entry. Claude read the file to understand the established format and protocol, then asked a clarifying question requesting the entry number, task, prompts, what happened, and what the user would change. The user responded by directing Claude to log this interaction itself — including the `/clear` command — and to follow the existing protocol. Claude wrote Entry 18 documenting the session from the `/clear` command through the final instruction.
+
+**What I Would Change:**
+The initial prompt "Log Entry into docs/ai-interaction-log.md" was too vague to act on — it did not specify what interaction to log, which produced a clarifying question and an extra round-trip. A better prompt would have included all required fields upfront: the task being logged, the prompts submitted, and a brief description of what happened. This entry is itself an example of the pattern identified in Pattern 1 of the log summary: incomplete prompts cause rework.
+
+---
+
