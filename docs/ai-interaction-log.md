@@ -542,3 +542,118 @@ Claude's initial explanation overclaimed — stating confidently that both sessi
 
 ---
 
+## Entry 20 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 5 — ETL Pipeline: Dataset Merging
+
+---
+
+**Task 1: Dataset Exploration (Subagent)**
+
+**Prompt:**
+> Use a subagent to explore the four elevator datasets before I begin the ETL pipeline. For each file — data/license.csv, data/installed.json, data/altered.json, data/inspection.csv — report: row count, column names and types, join key column, columns with inconsistent categories with more than 5 distinct values, location columns. Keep all exploration output in the subagent. Return only a summary of findings I need to start coding.
+
+**Prompting Technique:** Zero-shot with explicit output constraint
+
+**Why Zero-shot:** The task was well-defined — specific files, specific fields to report, and a clear instruction to contain raw output in the subagent. No examples or reasoning steps were needed. The key design decision was including "Keep all exploration output in the subagent" to protect the main context window before any notebook work had begun.
+
+**What Happened:**
+Claude spawned an Explore subagent that read all four dataset files and computed the requested metrics. The subagent returned only a structured summary covering row counts, column names and types, join key spellings per file, and categories with inconsistent naming. The main session received a clean summary without any raw value_counts or column dumps in the conversation history. The critical finding was that the join key is spelled differently across files: `ElevatingDevicesNumber` in license.csv and inspection.csv, `Elevating devices number` in installed.json, and `Elevating Devices Number` in altered.json — each requiring a rename before merging.
+
+**What I Would Change:**
+The subagent was told to cover all four datasets at once. In practice, Merge 3 (inspection.csv) was not started until a separate session, so the inspection.csv findings were lost to context compression before they could be used. A targeted subagent immediately before each merge would have been more efficient. That said, the upfront exploration did correctly surface the join key naming issue across all files, which informed every merge step.
+
+---
+
+**Task 2: Notebook Creation and Merge 1 — License and Installed**
+
+**Prompts:**
+> Create intelligence/etl_pipeline.ipynb. Add a markdown cell at the top with the header: `## AND-102 Task 5: ETL Pipeline — Dataset Merging`. Do not add any code yet.
+
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 1 — License + Installed`. Then add code cells to: 1. Load data/license.csv and apply the Task 6c filter: keep only rows where LICENSESTATUS is ACTIVE or PENDING_RENEWAL. 2. Load data/installed.json into a second DataFrame. 3. Print the row count of each DataFrame before merging. 4. Identify the common key between the two datasets and perform an inner merge on it. 5. Print the row count after merging and state how many rows were lost and why.
+
+> Still in Merge 1 of intelligence/etl_pipeline.ipynb, add code cells to: 1. Display the location columns from both the license and installed datasets side by side for a sample of rows. 2. Extract the province or city from each location column using a consistent method. 3. Filter the merged DataFrame to keep only rows where the extracted location values match between the two datasets. 4. Print the row count before and after the location filter. 5. Add a markdown cell explaining what was extracted, what "match" means, and why this filter was applied.
+
+> Still in Merge 1 of intelligence/etl_pipeline.ipynb, add code cells to: 1. Identify a column from the installed dataset that has more than 5 categories with inconsistent or redundant naming. 2. Print all distinct values in that column with their counts. 3. Apply a mapping to reduce the categories to a clean consolidated set. 4. Print the distinct values after cleaning. 5. Add a markdown cell explaining which column was chosen, what the original categories were, and how and why they were consolidated.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** Each prompt was a precise, bounded list of instructions specifying both the code and the markdown cells required. No examples or reasoning chains were needed — the instructions described the procedure and the expected output format directly.
+
+**What Happened:**
+Claude created `intelligence/etl_pipeline.ipynb` and built Merge 1 across three prompts. The license dataset was filtered to ACTIVE and PENDING_RENEWAL rows (43,297), and installed.json was loaded with its join key renamed from `Elevating devices number` to `ElevatingDevicesNumber`. The inner merge produced 43,297 rows with zero rows lost. A province consistency check extracted the second-to-last whitespace token from both location address strings, filtered to matching province values, and removed 46 rows where the same device number appeared in different provinces — flagged as data quality issues. `Device Type` in installed.json had 10 distinct values after filtering; `Freight Elevator-P` and `Freight Elevator-E` were collapsed into `Freight Elevator`, and `Material Lift - ATD` and `Special Installation` were grouped into `Other`, leaving 7 clean categories. Three errors were caught and fixed during execution: (1) a `jupyter nbconvert --output` double-path bug caused by passing `intelligence/etl_pipeline.ipynb` as the output argument from the project root — fixed by running from the `intelligence/` directory with a filename-only `--output`; (2) an unconditional "rows lost" message that printed even when zero rows were lost — fixed with an if/else branch; (3) a markdown cell that stated 11 distinct Device Type values when the filtered dataset had 10.
+
+**What I Would Change:**
+The four prompts for Merge 1 could have been three. The location extraction and province filter are directly related and could have been combined into one prompt. I also did not specify the nbconvert run convention in any prompt, which led to the double-path execution error. That bug eventually prompted a fix to CLAUDE.md documenting the correct command, but it could have been avoided entirely by knowing to run from the notebook's directory from the start.
+
+---
+
+**Task 3: Merge 2 — Adding Alterations**
+
+**Prompt:**
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 2 — Adding Alterations`. Then add code cells to: 1. Load data/altered.json into a DataFrame. 2. Merge it with the combined DataFrame from Merge 1 using a left merge so elevators with no alteration records are retained. 3. Print row counts before and after. 4. Identify elevators with 5 or more alteration records. 5. Print how many such elevators exist and what proportion of the total fleet they represent. 6. Add a markdown cell explaining why a left merge was used and what the row count change means.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** The merge strategy — left join to retain unaltered elevators — was stated directly in the prompt. The one-to-many relationship was already known from the prior subagent exploration, so no investigation step was needed. The instruction was complete enough to produce the correct output directly.
+
+**What Happened:**
+Claude loaded `altered.json` (31,619 rows) and renamed its join key from `Elevating Devices Number` to `ElevatingDevicesNumber`. The left merge expanded `merged_df` from 43,251 rows to 52,452 rows — a 9,201 row increase caused by elevators with multiple alteration records each contributing one row per record. A groupby analysis identified 51 elevators with 5 or more alteration records, representing 0.1% of the fleet. A markdown cell explained why a left merge was used and what the row count increase means: the frame is no longer device-level, so any device-level aggregation must groupby on `ElevatingDevicesNumber`. The notebook executed cleanly on the first run.
+
+**What I Would Change:**
+Step 4 asked for elevators with 5 or more alteration records but gave no reason for that threshold. A more precise prompt would have either justified the number or asked Claude to identify a meaningful cutoff — such as any device in the top 1% by alteration count. The output was analytically correct but the threshold was arbitrary.
+
+---
+
+**Task 4: Merge 3 — Adding Inspections**
+
+**Prompts:**
+> Use a subagent to explore data/inspection.csv before I merge it. Report: total row count, whether one elevator can have multiple inspection records, whether one inspection record can cover multiple elevators, the column that contains the inspection date, the most recent and oldest inspection dates. Return only a summary — keep all raw output in the subagent.
+
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 3 — Adding Inspections`. Then add code cells to: 1. Load data/inspection.csv. 2. State the relationship between elevators and inspections based on the subagent findings. 3. Decide how to handle this relationship before merging — keep only the most recent inspection per elevator. 4. Merge the inspection data with the combined DataFrame from Merge 2. 5. Print row counts before and after. 6. Add a markdown cell justifying the approach chosen and explaining the row count change.
+
+**Prompting Technique:** Zero-shot (exploration) + Zero-shot with embedded decision (implementation)
+
+**Why Zero-shot:** The exploration prompt was a direct factual query with a clear output constraint. The implementation prompt embedded the deduplication decision explicitly — "keep only the most recent inspection per elevator" — rather than asking Claude to choose a strategy. This avoided a clarifying round-trip while keeping the architectural decision with me rather than delegating it.
+
+**What Happened:**
+The Explore subagent confirmed that inspection.csv has a one-to-many relationship with elevators: 143,181 rows, 40,954 unique devices, up to 24 inspection records per elevator, and one inspection per row (InspectionNumber is unique). Two date columns exist: `Earliest_INSPECTION_Date` and `Latest_INSPECTION_Date`. The join key `ElevatingDevicesNumber` required no rename. Claude deduplicated inspection.csv to 40,954 rows by sorting on `Latest_INSPECTION_Date` descending and keeping the first record per device. The left merge of this deduplicated frame onto `merged_altered_df` produced exactly 52,452 rows — no change — confirming the deduplication prevented a row explosion. The markdown justification explained why merging the raw inspection frame would have multiplied alteration rows by the average inspection count per device, and why `Latest_INSPECTION_Date` was the correct sort key.
+
+**What I Would Change:**
+This was the cleanest merge step in the notebook. The targeted subagent immediately before implementation worked well — the findings were fresh and directly usable. I would replicate this pattern for every future merge: explore with a subagent, summarize the relationship, then implement. I would not rely on findings from an earlier session surviving a context compaction.
+
+---
+
+**Task 5: Final Save**
+
+**Prompt:**
+> In intelligence/etl_pipeline.ipynb, add a final code cell that saves the merged DataFrame to data/merged_elevator_data.csv. Print the final row count and the column names of the saved file.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** A single direct instruction. File path, format, and print requirements were all stated in the prompt with no ambiguity.
+
+**What Happened:**
+Claude added one code cell that called `to_csv` with `index=False` on `merged_inspection_df`, then printed the row count (52,452) and all 38 column names. The 38 columns span all four source datasets: 11 from license.csv, 9 from installed.json, 2 derived province columns, 9 from altered.json, and 7 from inspection.csv. The notebook executed cleanly and `data/merged_elevator_data.csv` was written to disk.
+
+**What I Would Change:**
+The prompt was correct and produced the right output. I would have added one more print to confirm the file was written successfully — for example, printing the file size in bytes — so that a silent write failure would be caught within the notebook rather than discovered later.
+
+---
+
+**Context Management Decisions**
+
+Two `/compact` commands were issued during this task, both with the same focus instruction:
+> Focus on the etl_pipeline.ipynb notebook, the merged DataFrame column names and row count after Merge [N], and the join key. Discard [exploration] output.
+
+**Why /compact was used:** The notebook construction prompts generated large outputs — printed DataFrames, value_counts tables, row count summaries — that accumulated in the context window quickly. Compacting after each merge kept the working context clean while preserving the three specific facts needed to continue: the DataFrame name, its row count, and the join key spelling. Both compacts were timed correctly — issued after a merge was verified and before the next merge began.
+
+**Why subagents were used:** Both the initial four-dataset exploration and the Merge 3 inspection.csv exploration were delegated to subagents. The reason was identical in both cases: raw exploration output — column dumps, value_counts tables, date range queries — is large and immediately actionable but not worth preserving in the main conversation after it has informed a decision. The subagent summary returned only the findings that shaped the next prompt. This kept the main session focused on construction.
+
+**What I Would Change:**
+The first /compact discarded the inspection.csv findings from the initial four-dataset subagent, requiring a second subagent before Merge 3. The fix is not to compact less aggressively, but to run targeted single-dataset subagents immediately before each merge rather than one large upfront exploration. That way the findings are always fresh and the compact does not need to preserve them. I would also have issued /compact before each merge rather than after — opening a new merge with a clean context and the correct prior DataFrame state is more reliable than trying to carry forward the right details across a growing conversation.
+
+---
+
