@@ -44,6 +44,17 @@ The dashboard should feel like a premium enterprise product — comparable to Li
 
 ---
 
+## Server Architecture
+
+The dashboard is no longer served as a static file. It is served by a Python Flask server located at `platform/server.py`.
+
+- The server loads `platform/elevator_fleet.csv` on startup. This file contains cleaned license data prepared by `platform/prepare_data.py`.
+- The main dashboard page is served at `/`.
+- All table interactivity is handled by HTMX. The server exposes endpoints that return HTML fragments for HTMX to swap into the page — they do not return JSON.
+- There is no custom JavaScript for filtering or sorting. All dynamic behavior is driven exclusively by HTMX attributes (`hx-get`, `hx-target`, `hx-swap`).
+
+---
+
 ## Page Layout
 
 The page is divided into two regions: a fixed left sidebar and a main content area to its right. The full page height is fixed to the viewport with no body scroll; the main content area scrolls independently.
@@ -201,6 +212,26 @@ One row per elevator. Data is placeholder — hardcoded JavaScript array of elev
 
 ---
 
+## Filters and Sorting
+
+### Status Filter
+
+A dropdown in the table header bar that filters the table by Device Status. Options: **All**, **Active**, **TSSA Shutdown**, **Customer Shutdown**, **Undergoing Major Alt**. Selecting a value sends a request to the server using `hx-get="/elevators?status=<value>"`, targets the table body, and swaps in the returned HTML fragment. Selecting "All" removes the status filter and returns all rows.
+
+### City Filter
+
+A dropdown in the table header bar that filters the table by city. City is extracted from the Location field as the token immediately before the province code. Options are populated from the distinct cities present in `platform/elevator_fleet.csv`, plus an "All Cities" option. Selecting a value sends a request using `hx-get="/elevators?city=<value>"`, targets the table body, and swaps in the returned HTML fragment.
+
+### Sortable Columns
+
+The **Elevator ID** and **License Expiry Date** column headers are clickable. Clicking a header sorts the table by that column ascending. Clicking the same header again reverses the sort to descending. Sort state is passed to the server as query string parameters (e.g., `sort=id&order=asc`). The server applies all active filter and sort parameters together in a single request and returns the updated table fragment.
+
+### Combined Behavior
+
+All filters and sorting operate simultaneously. Every HTMX request to `/elevators` carries the full current state — active status filter, active city filter, and active sort — as query parameters. The server applies all parameters and returns the appropriate filtered, sorted table fragment. The "Showing X of Y elevators" count in the table header is included in every fragment response and updates automatically on each swap.
+
+---
+
 ## Search Input
 
 Located in the header bar, right side. Contains a magnifying glass icon inside the left edge of the input. Placeholder text: "Search by ID, location, type, or status…". Filters table rows in real time — case-insensitive match against Elevator ID, Location, Type, and Status. Works in combination with the active card filter and sort.
@@ -241,3 +272,24 @@ Before dashboard development begins, the team must complete an initial explorati
 - Are the date values in `LICENSEEXPIRYDATE` consistently formatted and parseable?
 
 **Success criteria:** The exploration confirms that the key fields are sufficiently complete and consistent to display meaningful data in the dashboard. Any anomalies found should be noted in the notebook with a recommended handling approach.
+
+---
+
+## Data Model
+
+*Added: 2026-05-18*
+
+The dashboard operates on an **Elevator** entity assembled by joining three source datasets on `ElevatingDevicesNumber`. Each row in the detail table represents one physical elevator device.
+
+| Field | Data Type | Source Dataset | Source Column | Description |
+|---|---|---|---|---|
+| Elevator ID | Number | `license.csv` / `installed.json` | `ElevatingDevicesNumber` / `Elevating devices number` | Unique permanent identifier assigned to each physical elevator device. Primary join key across all datasets. |
+| Location | Text | `license.csv` | `LocationoftheElevatingDevice` | Full address string including street, city, postal code, province, and country. City/region is extracted as the token before the province code. |
+| Equipment Type | Text | `installed.json` | `Device Type` | Category of elevating device (e.g., Passenger Elevator, Freight Elevator, LULA Elevator, Observation Elevator). |
+| Device Status | Text | `installed.json` | `DeviceStatus` | Current operational status assigned by TSSA (e.g., Active, TSSA Shutdown, Customer Shutdown, Undergoing Major Alt). |
+| License Status | Text | `license.csv` | `LICENSESTATUS` | Administrative licence state (e.g., ACTIVE, PENDING_RENEWAL). Distinct from Device Status — an elevator can be physically Active but have a licence that is PENDING_RENEWAL. |
+| License Expiry Date | Date | `license.csv` | `LICENSEEXPIRYDATE` | Date the operating licence expires. Source format: `DD-MMM-YY` (e.g., `28-Apr-17`). Display format: `YYYY-MM-DD`. |
+| Last Inspection Date | Date | `inspection.csv` | `Latest_INSPECTION_Date` | Date of the most recent periodic inspection for this device. Derived by selecting the latest record per `ElevatingDevicesNumber`. |
+| Last Inspection Outcome | Text | `inspection.csv` | `InspectionOutcome` | Result of the most recent inspection (e.g., Satisfactory, Unsatisfactory, Conditional Pass). Sourced from the same record as Last Inspection Date. |
+
+> **Note:** License Status is used by the summary card filters but is not displayed as a standalone table column — Device Status is shown instead, as it reflects physical operability. Last Inspection Outcome is a data model field not currently in the table; add it to the Table Columns section if the operations manager needs it visible at a glance.

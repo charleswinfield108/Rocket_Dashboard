@@ -1,3 +1,5 @@
+# AND-101 Generative AI Fundamentals
+
 # AI Interaction Log
 
 This file records prompts submitted to AI tools and the outputs they produced during the development of RocketDash. Each entry notes the date, the tool used, the prompt, and a summary of the result.
@@ -346,3 +348,428 @@ A consistent practice across Tasks 5 and 6 was asking Claude to explain concepts
 ### Pattern 5 — The AI performed best when given a reference document
 
 The highest-quality outputs in this log came from prompts that referenced an existing specification. When `docs/dashboard_spec.md` was complete and cited as the source of truth, Claude produced accurate implementations with minimal correction. When the spec was incomplete or not referenced, outputs required rework. This points to a broader principle: AI tools are most effective when the context they are given is structured, complete, and accurate. Building a thorough spec document before implementation is not overhead — it is the most important input to any implementation prompt, and the single factor that most consistently determined whether a prompt succeeded or required correction.
+
+---
+
+# AND-102 Context Engineering
+---
+
+## Entry 14 — AND-102, Task 3: Dynamic Dashboard with HTMX
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Read `docs/dashboard_spec.md` in full. Update it to reflect the interactive behavior introduced in Task 3 (AND-102). Make two additions:
+>
+> 1. Add a "Server Architecture" section (place it after the Design Philosophy section): The dashboard is no longer a static file. It is served by a Python Flask server at `platform/server.py`. The server loads `platform/elevator_fleet.csv` on startup and serves the dashboard at `/`. All table interactivity is handled by HTMX — the server returns HTML fragments, not JSON. There is no custom JavaScript for filtering or sorting.
+>
+> 2. Add a "Filters and Sorting" section (place it after the Detail Table section): Status Filter using `hx-get="/elevators?status=<value>"`. City Filter using `hx-get="/elevators?city=<value>"`. Sortable columns (Elevator ID and License Expiry Date) with ascending/descending toggle via query string parameters. The "Showing X of Y elevators" count updates with every fragment response. Keep all existing sections intact. Match the spec's existing formatting and tone.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** The task was specific and bounded — two clearly described sections with explicit content provided in the prompt. The existing spec file gave Claude the formatting context it needed by reading it. No examples were needed (few-shot) because the format was already present in the file, and no step-by-step reasoning was required (chain-of-thought) because the content of each section was fully specified upfront.
+
+**What Happened:**
+Claude read `docs/dashboard_spec.md` in full and added both sections as specified. The "Server Architecture" section was inserted after the Design Philosophy section and describes the Flask server at `platform/server.py`, the CSV loaded on startup, and the HTMX fragment pattern with no custom JavaScript. The "Filters and Sorting" section was inserted after the Detail Table section and documents the Status Filter, City Filter, sortable column behavior, combined query parameter handling, and the live "Showing X of Y" count update. All existing sections were preserved and the new content matched the spec's formatting and tone.
+
+**What I Would Change:**
+The prompt produced the correct output without correction. The zero-shot technique was the right choice — the prompt was detailed enough to fully specify the output without needing examples or reasoning steps. In future spec update prompts I would continue this pattern: read the file first, state exactly where each section goes, and describe the content precisely enough that no interpretation is required.
+
+---
+
+## Entry 15 — AND-102, Task 3: Data Preparation Script
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Write a Python script at `platform/prepare_data.py` that reads `data/license.csv` and produces a cleaned output file at `platform/elevator_fleet.csv`.
+>
+> Apply the same filtering from Task 6c: keep only rows where `LICENSESTATUS` is `ACTIVE` or `PENDING_RENEWAL`. All other status values should be excluded.
+>
+> The output CSV must include only these four columns, renamed as shown: `ElevatingDevicesNumber` → `elevator_id`, `LocationoftheElevatingDevice` → `location`, `LICENSESTATUS` → `license_status`, `LICENSEEXPIRYDATE` → `license_expiry`.
+>
+> Parse `LICENSEEXPIRYDATE` using pandas and write `license_expiry` in `YYYY-MM-DD` format. The script must be runnable from the command line with `python platform/prepare_data.py`. Print a confirmation line on completion showing the row count written.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** The task was fully specified — exact file paths, known filtering logic from Task 6c, an explicit column mapping table, a defined date output format, and a required confirmation message. The data was already well understood from Module 1 Task 6 analysis. No examples or step-by-step reasoning were needed; a direct instruction was sufficient.
+
+**What Happened:**
+Claude checked the `platform/` directory and confirmed `data/license.csv` column names before writing the script. `platform/prepare_data.py` was created using pandas: reads `data/license.csv`, filters to `ACTIVE` and `PENDING_RENEWAL` rows, parses `LICENSEEXPIRYDATE` from `DD-MMM-YY` format using `pd.to_datetime()` with `format="%d-%b-%y"`, renames the four columns, and writes `platform/elevator_fleet.csv`. The script uses `pathlib.Path(__file__)` so it resolves the correct file paths regardless of where it is called from. Running `python3 platform/prepare_data.py` completed without errors and printed `Written 43297 rows to platform/elevator_fleet.csv`. The output CSV was verified to have the correct four-column structure with dates in `YYYY-MM-DD` format.
+
+**What I Would Change:**
+The prompt produced the correct output without correction. One improvement would be to specify the source date format (`DD-MMM-YY`) explicitly in the prompt — Claude inferred it correctly from inspecting the file, but stating it upfront would make the prompt self-contained and reduce the chance of a parsing error on a different dataset.
+
+---
+
+## Entry 16 — AND-102, Task 3: Flask Server (Part B)
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Create a Python Flask server at `platform/server.py`. Load `platform/elevator_fleet.csv` into a pandas DataFrame on startup and extract a `city` column from the location string using `split()[-5]`. Move `platform/index.html` to `platform/templates/index.html`. Serve the dashboard at `GET /`. Expose `GET /elevators` accepting `status`, `city`, `sort`, and `order` query parameters — apply all active filters and sort together, return a `<tbody>` HTML fragment with one `<tr>` per matching elevator, and include `X-Total-Count` and `X-Filtered-Count` response headers. Match the existing badge and date-highlight styling from the current HTML. Update `CLAUDE.md` to reflect the server-driven architecture, Flask and HTMX in the tech stack, the updated `platform/` directory description, and a conventions entry for the Flask server and HTMX fragment pattern.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** All components were fully specified — file paths, DataFrame setup, city extraction method, route signatures, query parameter names, response format, header names, and every CLAUDE.md change required. No examples or reasoning steps were needed; the instructions were complete enough to produce the correct output directly.
+
+**What Happened:**
+Claude read `platform/index.html` in full to match the existing table row structure and badge styling before writing any code. `platform/server.py` was created with Flask: loads `platform/elevator_fleet.csv` on startup, parses `license_expiry` as datetime, extracts `city` using `split()[-5].title()`, and defines `CITIES` and `STATUSES` lists for dropdown population in Part C. The `GET /` route renders `templates/index.html` passing `cities` and `statuses`. The `GET /elevators` route applies status, city, and sort filters, builds an HTML `<tbody>` fragment with matching row styling (green badge for ACTIVE, yellow for PENDING_RENEWAL, red date text for expired licences), appends an `hx-swap-oob` results count span, and returns `X-Total-Count` and `X-Filtered-Count` headers. Flask was not installed on the system; it was installed with `--break-system-packages` before the server could run. The server was verified: `/elevators?status=ACTIVE&sort=elevator_id&order=asc` returned a correctly formatted HTML fragment, and `/elevators?city=Toronto` returned headers showing 43,297 total and 12,185 filtered rows. `platform/index.html` was moved to `platform/templates/index.html`. `CLAUDE.md` was updated with the server-driven description, Flask and HTMX in the tech stack, updated `platform/` directory entry, and two new convention lines.
+
+**What I Would Change:**
+The Flask installation was not anticipated in the prompt — specifying "ensure Flask is installed before running" or checking for it upfront would have avoided the install step interrupting the verification. I would also have explicitly stated that `license_status` in the real CSV uses uppercase values (ACTIVE, PENDING_RENEWAL) rather than the mixed-case values in the placeholder data, so badge color definitions would have been correct on the first pass without needing to infer from the data.
+
+---
+
+## Entry 17 — AND-102, Task 3: HTMX Interactivity (Part C)
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Prompt:**
+> Update `platform/templates/index.html` and `platform/server.py` to add full HTMX interactivity. Think through how filter state, sort state, and HTMX requests interact before writing any code, then implement. Add HTMX CDN. Replace the sort controls with a `<form id="filters">` containing Status and City dropdowns and two hidden sort-state inputs. Convert the Elevator ID and License Expiry column headers into HTMX-triggering buttons using `hx-vals='{"clicked_sort": "..."}` and `hx-include="#filters"`. Add `hx-trigger="load"` to the table for initial population. Update `/elevators` in `server.py` to resolve sort toggle logic using `clicked_sort` vs. the current `sort` hidden input — flip order if same column, reset to `asc` if different. Append five `hx-swap-oob` elements to every response: results count, `sort-field` input, `sort-order` input, and both sort header buttons with updated icons. Remove the hardcoded `elevators` array and all JS filter/render functions; keep the summary card visual state JS.
+
+**Prompting Technique:** Chain-of-thought
+
+**Why Chain-of-thought:** Part C involved three interlocking systems — the filter form state, the sort toggle state, and the server's oob responses — that all had to be consistent. A direct instruction risked producing HTMX attributes that conflicted with the form field names or sort toggle logic that didn't match what the hidden inputs sent. Asking Claude to reason through the interaction before writing code ensured the `clicked_sort` / `sort` / `order` parameter flow was coherent end-to-end before any code was written.
+
+**What Happened:**
+Claude reasoned through the full state flow before implementing: a filter dropdown change fires the form's `hx-get` including all hidden fields; a column header click sends `clicked_sort` via `hx-vals` plus all form fields via `hx-include`; the server compares `clicked_sort` to the current `sort` hidden value to determine whether to flip or reset the order. Both files were then updated. `platform/templates/index.html` received the HTMX CDN script, the filter form with Status and City dropdowns populated from Jinja `statuses` and `cities` variables, two hidden inputs for sort state, sortable column header buttons with `↕` indicators, `hx-trigger="load"` on the table element, and the simplified card-only JavaScript. The hardcoded placeholder array and all JS filter/render functions were removed. Card counts were replaced with Jinja template variables (`{{ total }}`, `{{ active }}`, `{{ inactive }}`, `{{ expired }}`). `platform/server.py` was updated with `clicked_sort` toggle logic, search (`q`) support wired to the search input, and five oob elements in every `/elevators` response. Verified: the `GET /` route served the template with HTMX loaded; `/elevators` returned 43,297 rows on load; `status=PENDING_RENEWAL` filtered to 632; `city=Toronto` filtered to 12,185; each response contained 5 `hx-swap-oob` elements.
+
+**What I Would Change:**
+The sort icon update via oob-swapped buttons was the most complex part and required careful reasoning about the state flow. I would document this pattern — `clicked_sort` as a separate param distinct from the hidden `sort` field — in `CLAUDE.md` so it doesn't need to be re-derived in future sessions. I would also have wired the search input to HTMX from the start of the prompt rather than relying on Claude to infer it as a natural extension.
+
+---
+
+## Entry 18 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AI Interaction Log — Session Opening
+
+**Prompt 1:**
+> `/clear`
+
+**Prompt 2:**
+> Log Entry into docs/ai-interaction-log.md
+
+**Prompt 3:**
+> Log a new entry following the protocol include the /clear request
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** Each prompt was a direct instruction with no examples or reasoning steps required. The requests were brief and assumed Claude would infer the format from the existing log.
+
+**What Happened:**
+The session opened with a `/clear` command, which wiped the prior conversation context. The user then opened `docs/ai-interaction-log.md` in the IDE and issued a bare instruction to log a new entry. Claude read the file to understand the established format and protocol, then asked a clarifying question requesting the entry number, task, prompts, what happened, and what the user would change. The user responded by directing Claude to log this interaction itself — including the `/clear` command — and to follow the existing protocol. Claude wrote Entry 18 documenting the session from the `/clear` command through the final instruction.
+
+**What I Would Change:**
+The initial prompt "Log Entry into docs/ai-interaction-log.md" was too vague to act on — it did not specify what interaction to log, which produced a clarifying question and an extra round-trip. A better prompt would have included all required fields upfront: the task being logged, the prompts submitted, and a brief description of what happened. This entry is itself an example of the pattern identified in Pattern 1 of the log summary: incomplete prompts cause rework.
+
+---
+
+## Entry 19 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 4 — Completion, Commit, and Status Bar Understanding
+
+---
+
+**Task 1: Completing the Task 4 Deliverables**
+
+**Prompt 1:**
+> What criteria still needs to be met to complete Task 4?
+
+**Prompt 2:**
+> Create the file and set the status structure
+
+**Prompt 3:**
+> how do I create the screen for the screenshot?
+
+**Prompt 4:**
+> *(screenshot of the status bar provided)*
+
+**Prompt 5:**
+> I added the file to the assets folder. Was it added correctly?
+
+**Prompt 6:**
+> Let's commit
+
+**Prompt 7:**
+> What is remaining for Task 4 to be complete?
+
+**Prompt 8:**
+> Let's double check Task 4 before completing Task 5 *(listed all five evaluation criteria)*
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** Each prompt was a direct, bounded instruction. The task requirements were already documented in `Requirements/task4.md` and the work was incremental — no examples or step-by-step reasoning were needed at any stage.
+
+**What Happened:**
+Claude read `Requirements/task4.md` and identified the only remaining deliverable: `docs/statusbar_notes.md`. The file was created with a screenshot placeholder, explanations of all five status bar values, and a section on `cache_read_input_tokens` vs. `cache_creation_input_tokens`. Claude then guided the user through taking a screenshot using Win+Shift+S from the terminal CLI session, created the `assets/` directory, and corrected a filename mismatch (`statusbar_screenshot.md.png` → `statusbar_screenshot.png`). The `statusline.sh` script was also patched — the model field was returning a raw JSON object instead of the model ID because the actual JSON structure uses `.model.id`, not `.model` as a plain string. After the fix the status bar displayed correctly. All three files (`scripts/statusline.sh`, `docs/statusbar_notes.md`, `assets/statusbar_screenshot.png`) were committed and pushed. A final check against all five evaluation criteria confirmed Task 4 complete.
+
+**What I Would Change:**
+The screenshot step required more back-and-forth than necessary. The initial prompt to create the file did not include any guidance on how to capture the screenshot, so that became a separate exchange. A single well-structured prompt could have included: create the notes file, create the assets directory, and here is how to take the screenshot. Grouping related setup steps into one prompt would have reduced the number of turns.
+
+---
+
+**Task 2: Understanding the Status Bar — CLI vs. VSCode Extension**
+
+**Prompt 1:**
+> Before we begin. I thought that I was already using Claude in the session. What changed when I typed Claude in the Terminal?
+
+**Prompt 2:**
+> So the status bar only tracks terminal sessions?
+
+**Prompt 3:**
+> Ok. but I dont see the status bar in the VS Code Extension
+
+**Prompt 4:**
+> Why is the status bar still reporting 0 after our interactions?
+
+**Prompt 5:**
+> *(quoted Claude's earlier statement that both sessions run the same script and are equally tracked)*
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-Shot:** These were direct clarifying questions requiring factual explanations, not implementation. No examples or reasoning chains were needed.
+
+**What Happened:**
+Claude explained that typing `claude` in the terminal opened a second, independent CLI session separate from the VSCode extension session already in use. Each session has its own context window and cost tracking. Claude initially stated that both the VSCode extension and the terminal CLI run `statusline.sh` and display the status bar equally. The user challenged this after the status bar remained invisible in the extension throughout the entire session. Claude corrected the overstatement: the VSCode extension likely does not render the `statusLine` output at all, and the feature appears to be terminal CLI only. The zero values in the screenshot were explained by the fact that the terminal session was brand new — no messages had been sent in that session at the time of the screenshot.
+
+**What I Would Change:**
+Claude's initial explanation overclaimed — stating confidently that both sessions run the same script when there was no evidence the VSCode extension renders the status bar. I should have verified this limitation before asserting it was equivalent. The correct approach would have been to note upfront that `statusLine` is confirmed to work in the terminal CLI and that VSCode extension support is uncertain. This would have avoided a correction and set more accurate expectations from the start.
+
+---
+
+## Entry 20 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 5 — ETL Pipeline: Dataset Merging
+
+---
+
+**Task 1: Dataset Exploration (Subagent)**
+
+**Prompt:**
+> Use a subagent to explore the four elevator datasets before I begin the ETL pipeline. For each file — data/license.csv, data/installed.json, data/altered.json, data/inspection.csv — report: row count, column names and types, join key column, columns with inconsistent categories with more than 5 distinct values, location columns. Keep all exploration output in the subagent. Return only a summary of findings I need to start coding.
+
+**Prompting Technique:** Zero-shot with explicit output constraint
+
+**Why Zero-shot:** The task was well-defined — specific files, specific fields to report, and a clear instruction to contain raw output in the subagent. No examples or reasoning steps were needed. The key design decision was including "Keep all exploration output in the subagent" to protect the main context window before any notebook work had begun.
+
+**What Happened:**
+Claude spawned an Explore subagent that read all four dataset files and computed the requested metrics. The subagent returned only a structured summary covering row counts, column names and types, join key spellings per file, and categories with inconsistent naming. The main session received a clean summary without any raw value_counts or column dumps in the conversation history. The critical finding was that the join key is spelled differently across files: `ElevatingDevicesNumber` in license.csv and inspection.csv, `Elevating devices number` in installed.json, and `Elevating Devices Number` in altered.json — each requiring a rename before merging.
+
+**What I Would Change:**
+The subagent was told to cover all four datasets at once. In practice, Merge 3 (inspection.csv) was not started until a separate session, so the inspection.csv findings were lost to context compression before they could be used. A targeted subagent immediately before each merge would have been more efficient. That said, the upfront exploration did correctly surface the join key naming issue across all files, which informed every merge step.
+
+---
+
+**Task 2: Notebook Creation and Merge 1 — License and Installed**
+
+**Prompts:**
+> Create intelligence/etl_pipeline.ipynb. Add a markdown cell at the top with the header: `## AND-102 Task 5: ETL Pipeline — Dataset Merging`. Do not add any code yet.
+
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 1 — License + Installed`. Then add code cells to: 1. Load data/license.csv and apply the Task 6c filter: keep only rows where LICENSESTATUS is ACTIVE or PENDING_RENEWAL. 2. Load data/installed.json into a second DataFrame. 3. Print the row count of each DataFrame before merging. 4. Identify the common key between the two datasets and perform an inner merge on it. 5. Print the row count after merging and state how many rows were lost and why.
+
+> Still in Merge 1 of intelligence/etl_pipeline.ipynb, add code cells to: 1. Display the location columns from both the license and installed datasets side by side for a sample of rows. 2. Extract the province or city from each location column using a consistent method. 3. Filter the merged DataFrame to keep only rows where the extracted location values match between the two datasets. 4. Print the row count before and after the location filter. 5. Add a markdown cell explaining what was extracted, what "match" means, and why this filter was applied.
+
+> Still in Merge 1 of intelligence/etl_pipeline.ipynb, add code cells to: 1. Identify a column from the installed dataset that has more than 5 categories with inconsistent or redundant naming. 2. Print all distinct values in that column with their counts. 3. Apply a mapping to reduce the categories to a clean consolidated set. 4. Print the distinct values after cleaning. 5. Add a markdown cell explaining which column was chosen, what the original categories were, and how and why they were consolidated.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** Each prompt was a precise, bounded list of instructions specifying both the code and the markdown cells required. No examples or reasoning chains were needed — the instructions described the procedure and the expected output format directly.
+
+**What Happened:**
+Claude created `intelligence/etl_pipeline.ipynb` and built Merge 1 across three prompts. The license dataset was filtered to ACTIVE and PENDING_RENEWAL rows (43,297), and installed.json was loaded with its join key renamed from `Elevating devices number` to `ElevatingDevicesNumber`. The inner merge produced 43,297 rows with zero rows lost. A province consistency check extracted the second-to-last whitespace token from both location address strings, filtered to matching province values, and removed 46 rows where the same device number appeared in different provinces — flagged as data quality issues. `Device Type` in installed.json had 10 distinct values after filtering; `Freight Elevator-P` and `Freight Elevator-E` were collapsed into `Freight Elevator`, and `Material Lift - ATD` and `Special Installation` were grouped into `Other`, leaving 7 clean categories. Three errors were caught and fixed during execution: (1) a `jupyter nbconvert --output` double-path bug caused by passing `intelligence/etl_pipeline.ipynb` as the output argument from the project root — fixed by running from the `intelligence/` directory with a filename-only `--output`; (2) an unconditional "rows lost" message that printed even when zero rows were lost — fixed with an if/else branch; (3) a markdown cell that stated 11 distinct Device Type values when the filtered dataset had 10.
+
+**What I Would Change:**
+The four prompts for Merge 1 could have been three. The location extraction and province filter are directly related and could have been combined into one prompt. I also did not specify the nbconvert run convention in any prompt, which led to the double-path execution error. That bug eventually prompted a fix to CLAUDE.md documenting the correct command, but it could have been avoided entirely by knowing to run from the notebook's directory from the start.
+
+---
+
+**Task 3: Merge 2 — Adding Alterations**
+
+**Prompt:**
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 2 — Adding Alterations`. Then add code cells to: 1. Load data/altered.json into a DataFrame. 2. Merge it with the combined DataFrame from Merge 1 using a left merge so elevators with no alteration records are retained. 3. Print row counts before and after. 4. Identify elevators with 5 or more alteration records. 5. Print how many such elevators exist and what proportion of the total fleet they represent. 6. Add a markdown cell explaining why a left merge was used and what the row count change means.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** The merge strategy — left join to retain unaltered elevators — was stated directly in the prompt. The one-to-many relationship was already known from the prior subagent exploration, so no investigation step was needed. The instruction was complete enough to produce the correct output directly.
+
+**What Happened:**
+Claude loaded `altered.json` (31,619 rows) and renamed its join key from `Elevating Devices Number` to `ElevatingDevicesNumber`. The left merge expanded `merged_df` from 43,251 rows to 52,452 rows — a 9,201 row increase caused by elevators with multiple alteration records each contributing one row per record. A groupby analysis identified 51 elevators with 5 or more alteration records, representing 0.1% of the fleet. A markdown cell explained why a left merge was used and what the row count increase means: the frame is no longer device-level, so any device-level aggregation must groupby on `ElevatingDevicesNumber`. The notebook executed cleanly on the first run.
+
+**What I Would Change:**
+Step 4 asked for elevators with 5 or more alteration records but gave no reason for that threshold. A more precise prompt would have either justified the number or asked Claude to identify a meaningful cutoff — such as any device in the top 1% by alteration count. The output was analytically correct but the threshold was arbitrary.
+
+---
+
+**Task 4: Merge 3 — Adding Inspections**
+
+**Prompts:**
+> Use a subagent to explore data/inspection.csv before I merge it. Report: total row count, whether one elevator can have multiple inspection records, whether one inspection record can cover multiple elevators, the column that contains the inspection date, the most recent and oldest inspection dates. Return only a summary — keep all raw output in the subagent.
+
+> In intelligence/etl_pipeline.ipynb, add a markdown cell: `## AND-102 Task 5: Merge 3 — Adding Inspections`. Then add code cells to: 1. Load data/inspection.csv. 2. State the relationship between elevators and inspections based on the subagent findings. 3. Decide how to handle this relationship before merging — keep only the most recent inspection per elevator. 4. Merge the inspection data with the combined DataFrame from Merge 2. 5. Print row counts before and after. 6. Add a markdown cell justifying the approach chosen and explaining the row count change.
+
+**Prompting Technique:** Zero-shot (exploration) + Zero-shot with embedded decision (implementation)
+
+**Why Zero-shot:** The exploration prompt was a direct factual query with a clear output constraint. The implementation prompt embedded the deduplication decision explicitly — "keep only the most recent inspection per elevator" — rather than asking Claude to choose a strategy. This avoided a clarifying round-trip while keeping the architectural decision with me rather than delegating it.
+
+**What Happened:**
+The Explore subagent confirmed that inspection.csv has a one-to-many relationship with elevators: 143,181 rows, 40,954 unique devices, up to 24 inspection records per elevator, and one inspection per row (InspectionNumber is unique). Two date columns exist: `Earliest_INSPECTION_Date` and `Latest_INSPECTION_Date`. The join key `ElevatingDevicesNumber` required no rename. Claude deduplicated inspection.csv to 40,954 rows by sorting on `Latest_INSPECTION_Date` descending and keeping the first record per device. The left merge of this deduplicated frame onto `merged_altered_df` produced exactly 52,452 rows — no change — confirming the deduplication prevented a row explosion. The markdown justification explained why merging the raw inspection frame would have multiplied alteration rows by the average inspection count per device, and why `Latest_INSPECTION_Date` was the correct sort key.
+
+**What I Would Change:**
+This was the cleanest merge step in the notebook. The targeted subagent immediately before implementation worked well — the findings were fresh and directly usable. I would replicate this pattern for every future merge: explore with a subagent, summarize the relationship, then implement. I would not rely on findings from an earlier session surviving a context compaction.
+
+---
+
+**Task 5: Final Save**
+
+**Prompt:**
+> In intelligence/etl_pipeline.ipynb, add a final code cell that saves the merged DataFrame to data/merged_elevator_data.csv. Print the final row count and the column names of the saved file.
+
+**Prompting Technique:** Zero-shot
+
+**Why Zero-shot:** A single direct instruction. File path, format, and print requirements were all stated in the prompt with no ambiguity.
+
+**What Happened:**
+Claude added one code cell that called `to_csv` with `index=False` on `merged_inspection_df`, then printed the row count (52,452) and all 38 column names. The 38 columns span all four source datasets: 11 from license.csv, 9 from installed.json, 2 derived province columns, 9 from altered.json, and 7 from inspection.csv. The notebook executed cleanly and `data/merged_elevator_data.csv` was written to disk.
+
+**What I Would Change:**
+The prompt was correct and produced the right output. I would have added one more print to confirm the file was written successfully — for example, printing the file size in bytes — so that a silent write failure would be caught within the notebook rather than discovered later.
+
+---
+
+**Context Management Decisions**
+
+Two `/compact` commands were issued during this task, both with the same focus instruction:
+> Focus on the etl_pipeline.ipynb notebook, the merged DataFrame column names and row count after Merge [N], and the join key. Discard [exploration] output.
+
+**Why /compact was used:** The notebook construction prompts generated large outputs — printed DataFrames, value_counts tables, row count summaries — that accumulated in the context window quickly. Compacting after each merge kept the working context clean while preserving the three specific facts needed to continue: the DataFrame name, its row count, and the join key spelling. Both compacts were timed correctly — issued after a merge was verified and before the next merge began.
+
+**Why subagents were used:** Both the initial four-dataset exploration and the Merge 3 inspection.csv exploration were delegated to subagents. The reason was identical in both cases: raw exploration output — column dumps, value_counts tables, date range queries — is large and immediately actionable but not worth preserving in the main conversation after it has informed a decision. The subagent summary returned only the findings that shaped the next prompt. This kept the main session focused on construction.
+
+**What I Would Change:**
+The first /compact discarded the inspection.csv findings from the initial four-dataset subagent, requiring a second subagent before Merge 3. The fix is not to compact less aggressively, but to run targeted single-dataset subagents immediately before each merge rather than one large upfront exploration. That way the findings are always fresh and the compact does not need to preserve them. I would also have issued /compact before each merge rather than after — opening a new merge with a clean context and the correct prior DataFrame state is more reliable than trying to carry forward the right details across a growing conversation.
+
+---
+
+## Entry 21 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — NLP Analysis of Incident Narratives
+
+---
+
+**Prompt:**
+> Load data/incident.json into a pandas DataFrame in a new notebook at intelligence/nlp_analysis.ipynb. Add a header cell: `## AND-102 Task 6: NLP Analysis of Incident Narratives`. Examine the "Reported occurrence narrative" column: How many non-null values are there? What is the mean and median word count per narrative? Print the findings clearly.
+
+**Prompting Technique:** Zero-shot with explicit output specification
+
+**Why Zero-shot:** The task was fully specified — file path, notebook path, header text, column name, and the exact metrics to compute. No reasoning chain or examples were needed. The output format was dictated directly in the prompt ("Print the findings clearly"), and the column name was given verbatim to prevent ambiguity.
+
+**What Happened:**
+Claude previewed `incident.json` to confirm the column name `"Reported occurrence narrative"` and the file structure before writing the notebook. A two-cell notebook was created: one code cell to load the JSON into a DataFrame, and one to compute and print the three metrics. The notebook executed cleanly. Findings: 2,445 of 2,446 rows have a non-null narrative (only 1 missing), mean word count is 12.6, and median word count is 12.0. The near-complete coverage and tight mean/median gap indicate narratives are consistently short, formulaic descriptions rather than free-form text.
+
+**What I Would Change:**
+The prompt was efficient and produced the correct output. For a more useful first look, I would have added a request to print the top 5 most common narrative lengths and a sample of the shortest and longest narratives — this would immediately show whether any rows are near-empty strings or unusually long outliers, which matters before applying any NLP tokenization in later steps.
+
+---
+
+## Entry 22 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6) — subagent
+
+**Task:** AND-102, Task 6 — NLP Library / Approach Decision
+
+---
+
+**Prompt:**
+> Launch a subagent before making any library decisions. This keeps library docs, comparison tables, and exploration output out of your main session context.
+>
+> I need to choose an NLP approach for ~2,400 short elevator incident narratives (~20–50 words each). Compare these two options:
+> 1. Topic modeling with LDA (sklearn or gensim)
+> 2. TF-IDF vectorization + K-Means clustering (sklearn)
+>
+> For each: describe what it does in one sentence, how well it handles short texts, and one key limitation for this dataset. End with a recommendation and one sentence of reasoning. No code.
+
+**Prompting Technique:** Subagent delegation with explicit output constraint
+
+**Why a subagent:** The comparison would have pulled library documentation, co-occurrence explanations, and comparison tables into the main session. Delegating to a subagent kept that research out of the working context so that only the actionable recommendation returned to the main session.
+
+**What the Subagent Found:**
+- **LDA** suffers on short texts because 20–50 word documents do not generate enough word co-occurrence signal for stable topic inference. The domain-specific vocabulary (door, cable, failed, inspection) causes topics to bleed into each other rather than separate cleanly.
+- **TF-IDF + K-Means** handles short texts better because TF-IDF is purely frequency-based and does not require co-occurrence patterns. The main limitation is that K-Means assumes spherical clusters of roughly equal size, which may absorb rare but distinct incident types into larger clusters.
+- **Recommendation:** TF-IDF + K-Means. At 2,400 documents averaging 30–40 words, the corpus is too small and sparse for LDA to estimate stable distributions. TF-IDF + K-Means will produce more interpretable, reproducible clusters with less tuning effort.
+
+**Decision:** TF-IDF + K-Means (sklearn). Implementation will proceed in `intelligence/nlp_analysis.ipynb`.
+
+**What I Would Change:**
+The subagent prompt was well-scoped. One addition that would have been useful: asking for a recommended value of K (number of clusters) or a method for choosing it — for example, the elbow method or silhouette score — so that the implementation prompt could specify K directly rather than requiring a separate tuning step.
+
+---
+
+## Entry 23 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — Add markdown explanation cell to `intelligence/nlp_analysis.ipynb`
+
+---
+
+**Prompt:**
+> Add a markdown cell in the notebook explaining in 3–5 sentences:
+> - Which technique I chose and why
+> - Why it fits short incident narratives better than the alternative
+> - Which library I used
+
+**Prompting Technique:** Implicit context continuation
+
+**Why this technique:** The approach decision had already been logged in Entry 22 and the cleaned_narrative column was in place. Referring to "the technique I chose" without restating the choice let the prompt stay concise — Claude held the relevant context from earlier in the session and applied it directly.
+
+**What Happened:**
+Claude read the notebook's cell structure, appended a markdown cell explaining TF-IDF + K-Means (scikit-learn), and re-executed the notebook to verify no regressions. The cell covers: why TF-IDF + K-Means was chosen, why LDA was unsuitable for ~12-word post-cleaning documents due to sparse co-occurrence signal, and a preview of what the five clusters are expected to surface.
+
+**What I Would Change:**
+Nothing significant. The prompt was compact and the output matched the brief exactly. If I were writing it again I might add "position the cell immediately before the clustering code" to be explicit about placement, though in practice appending it after preprocessing made logical sense.
+
+---
+
+## Entry 24 — 2026-05-19
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-102, Task 6 — Cluster size chart with named themes + operations summary + full notebook execution
+
+---
+
+**Prompts (this session covered three sequential tasks):**
+
+> Create one chart visualizing the results (topic word distribution or cluster sizes). Label all axes, add a title. Save to assets/incident_topic_distribution.png.
+
+> Wait, what are the themes, can you name them accordingly?
+
+> Write a 5–8 sentence paragraph summarizing findings for a non-technical operations manager. Name the most common incident types, identify at least one pattern the team should act on, and note any surprising finding.
+
+> Run Restart Kernel and Run All. Fix any errors. Log completion in the AI Interaction Log.
+
+**Prompting Technique:** Iterative refinement across short follow-up prompts
+
+**Why this technique:** Each prompt built on the previous output rather than specifying everything upfront. The chart was generated first with generic labels, then a single follow-up ("name them accordingly") upgraded the labels to meaningful theme names without rewriting the whole prompt. This is more efficient than front-loading every detail — you can evaluate the output at each step and adjust only what needs changing.
+
+**What Happened:**
+- Appended a TF-IDF + K-Means clustering cell and a matplotlib bar chart cell to the notebook; `scikit-learn` was not installed and was added with `pip install --break-system-packages`.
+- Executed the notebook; five clusters emerged cleanly: General Injuries & Falls (908), Door Strike Injuries (567), Hoistway Water Damage (363), Level Misalignment & Trip Hazards (311), Pit Flooding & Sump Pump Failure (296).
+- A follow-up prompt replaced generic "Cluster 0–4" axis labels with the five theme names; chart saved to `assets/incident_topic_distribution.png`.
+- Written a non-technical findings paragraph and saved it as `docs/incident_analysis_summary.md` with a breakdown table and embedded chart.
+- Final "Restart Kernel and Run All" executed cleanly with no errors.
+
+**What I Would Change:**
+Specifying the axis label style ("use theme names, not cluster numbers") in the original chart prompt would have avoided the follow-up round-trip. The iterative approach worked fine here, but for a deliverable going straight to a client the first prompt should include all formatting requirements.
+
+---
+
