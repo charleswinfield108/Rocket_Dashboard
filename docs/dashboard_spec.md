@@ -293,3 +293,11 @@ The dashboard operates on an **Elevator** entity assembled by joining three sour
 | Last Inspection Outcome | Text | `inspection.csv` | `InspectionOutcome` | Result of the most recent inspection (e.g., Satisfactory, Unsatisfactory, Conditional Pass). Sourced from the same record as Last Inspection Date. |
 
 > **Note:** License Status is used by the summary card filters but is not displayed as a standalone table column — Device Status is shown instead, as it reflects physical operability. Last Inspection Outcome is a data model field not currently in the table; add it to the Table Columns section if the operations manager needs it visible at a glance.
+
+---
+
+## AND-103 Task 1: Interaction Specification
+
+*Added: 2026-05-28*
+
+

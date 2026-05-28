@@ -773,3 +773,37 @@ Specifying the axis label style ("use theme names, not cluster numbers") in the 
 
 ---
 
+# AND-103 Spec-Driven Development
+
+---
+
+## Entry 25 — 2026-05-28
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 1 — Interaction Specification (SDD Interview)
+
+---
+
+**Prompt:**
+> Interview me about the three dashboard interactions — elevator detail panel, filter and search, and sort behavior — using the six SDD elements. Ask one element at a time.
+
+**Prompting Technique:** SDD interview pattern — Claude asks questions, user provides domain answers, user writes the spec
+
+**Why this technique:** The interview pattern prevents the blank-page problem by breaking spec-writing into targeted one-element-at-a-time questions. It forces implicit decisions to become explicit — constraints, prior decisions, and edge cases that would otherwise be left undefined surface naturally when answering direct questions. The spec content comes from domain knowledge, not Claude's assumptions.
+
+**What Happened:**
+Claude conducted a structured interview across all three interactions (detail panel, filter/search, sort behavior), covering all six SDD elements for each. Key decisions surfaced during the interview:
+
+- *Detail panel:* Full inspection/incident/alteration history must be read from source files (`inspection.csv`, `incident.json`, `altered.json`) per request — the merged CSV only holds the most recent inspection and a total alteration count, not full histories.
+- *Filter and search:* Search scope narrowed to elevator ID and location only (not equipment type or status) — the dropdowns already handle status/type filtering and adding them to search would create noise. 2-character minimum added to prevent single-keystroke requests.
+- *Sort behavior:* Default sort set to License Expiry ascending on page load — surfaces the most urgent elevators immediately without requiring user action. Last Inspection Date added as a third sortable column (server already supported it; only the header button was missing).
+
+**SDD Workflow Decision:**
+The interview revealed a gap that would have caused a bug: the assumption that the merged CSV contained full inspection history. Checking the actual columns mid-interview showed only `Latest_INSPECTION_Date` and `InspectionOutcome` — one record per elevator. This changed the prior decisions element for the detail panel: the endpoint must read source files per request rather than querying in-memory data. Discovering this during spec-writing (not during implementation) is exactly what the SDD process is designed to do.
+
+**What I Would Change:**
+I would explore the data files before the interview rather than mid-session. Having column lists for all source files ready at the start would have prevented the interruption and might have surfaced other assumptions worth questioning upfront.
+
+---
+
