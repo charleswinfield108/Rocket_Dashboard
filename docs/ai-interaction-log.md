@@ -807,3 +807,30 @@ I would explore the data files before the interview rather than mid-session. Hav
 
 ---
 
+## Entry 26 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 1 — Writing the Interaction Specification
+
+---
+
+**Prompt:**
+> Based on the three interview summaries (detail panel, filter and search, sort behavior), write the Interaction Specification section into docs/dashboard_spec.md using all six SDD elements for each interaction.
+
+**Prompting Technique:** Structured document generation from interview output
+
+**Why this technique:** The interview (Entry 25) produced three structured summaries covering all six SDD elements. Providing those summaries directly as input gave Claude precise, scoped content to work from — no assumptions, no invented decisions. The output matches the decisions made during the interview rather than Claude's defaults.
+
+**What Happened:**
+Claude wrote the full Interaction Specification section into `docs/dashboard_spec.md` covering all three interactions. Each interaction was structured with all six SDD elements: outcomes, scope boundaries, constraints, prior decisions, task breakdown, and verification criteria. Key content written:
+
+- *Detail panel:* Defined the `/elevator/{id}` endpoint as returning an HTML fragment; specified that full history must come from source files, not the merged CSV; documented the four-step task breakdown from panel container to endpoint implementation
+- *Filter and search:* Specified 2-character minimum and 300ms debounce as constraints; restricted search scope to elevator ID and location only; identified the exact changes needed to the existing `/elevators` endpoint
+- *Sort behavior:* Set License Expiry ascending as the server-side default on page load; added Last Inspection Date as the third sortable column; confirmed sort state independence from the detail panel
+
+**What I Would Change:**
+The spec was written in one pass from the interview summaries without gaps. The interview process produced complete enough answers that no clarifying questions were needed during writing. In future tasks I would follow the same pattern — complete the interview first, then write the spec as a separate step — rather than trying to do both simultaneously.
+
+---
+
