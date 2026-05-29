@@ -300,4 +300,125 @@ The dashboard operates on an **Elevator** entity assembled by joining three sour
 
 *Added: 2026-05-28*
 
+---
+
+### Interaction 1: Elevator Detail Panel
+
+**Outcomes**
+When a user clicks any row in the fleet table, a side panel opens showing that elevator's complete record. The user can see: inspection history (total count, date and outcome for each inspection), incident count with expandable detail (date and results per incident), alteration count with expandable detail (date, type, and status per alteration), and current device status. The user cannot currently see this information without cross-referencing three separate views; after this interaction is built, everything is available in one panel without leaving the dashboard.
+
+**Scope Boundaries**
+- Inspection history: full record from `data/inspection.csv` — not limited to the most recent entry in the merged CSV
+- Incidents: full record from `data/incident.json` filtered by elevator ID; count shown with expandable detail (date, results)
+- Alterations: full record from `data/altered.json` filtered by elevator ID; count shown with expandable detail (date, type, status)
+- Current status, location, and equipment type: read from `data/merged_elevator_data.csv` (already loaded in memory at server startup)
+- One panel open at a time — opening a new elevator replaces the current panel
+- Style polish (colors, spacing refinement) is out of scope for this iteration; functionality is the priority
+
+**Constraints**
+- All panel loading must use HTMX (`hx-get`, `hx-target`, `hx-swap`) — no custom JavaScript fetch calls
+- No full page reload when opening, updating, or closing the panel
+- Only one detail panel open at a time; clicking a new row replaces the current panel content
+- Server response must return under 500ms; source files are read per request and filtered by elevator ID
+- Panel response must be an HTML fragment, consistent with the existing `/elevators` endpoint pattern
+
+**Prior Decisions**
+- `data/merged_elevator_data.csv` is loaded into memory on server startup; it contains one row per elevator with static fields (location, equipment type, device status, alteration count, most recent inspection only) — it does not contain full history
+- Full inspection history, incident records, and alteration records must be read from their source files (`inspection.csv`, `incident.json`, `altered.json`) per request, filtered by `ElevatingDevicesNumber`
+- The existing `/elevators` endpoint returns a `<tbody>` HTML fragment; the new `/elevator/{id}` endpoint follows the same pattern — HTML fragment, not JSON
+- The Jinja2 template already structures the page; a `#detail-panel` container must be added to the layout
+
+**Task Breakdown**
+1. Add a `#detail-panel` container to the page layout in `platform/templates/index.html`
+2. Add `hx-get="/elevator/{id}"`, `hx-target="#detail-panel"`, `hx-swap="innerHTML"` to each table row
+3. Build the `GET /elevator/{id}` endpoint in `platform/server.py` — reads static info from the merged CSV and full history from source files, returns an HTML fragment
+4. Add basic panel structure: sections for Inspections, Incidents, Alterations with a close button (style polish deferred)
+
+**Verification Criteria**
+- Clicking a row loads that specific elevator's data — not another elevator's
+- Inspection count in the panel matches the actual number of records in `inspection.csv` for that elevator ID
+- Requesting a non-existent elevator ID returns HTTP 404
+- Clicking a different row while the panel is open replaces the panel content with the new elevator's data
+- The panel can be closed without a page reload
+- No custom JavaScript is used to load or update the panel
+
+---
+
+### Interaction 2: Filter and Search
+
+**Outcomes**
+The user can type in a search box to filter the table by elevator ID or location. Search works simultaneously with the existing status and city dropdown filters — all active filters narrow the results together. Typing 2 or more characters triggers a filtered table update; clearing the search box returns the table to showing all results for the active dropdown state.
+
+**Scope Boundaries**
+- Search matches against elevator ID and location only — case-insensitive, partial match
+- Search does not match against equipment type, license status, device status, or inspection outcome — the dropdowns handle those fields
+- Search and dropdowns always combine: results must satisfy both the search term and any active dropdown values simultaneously
+- No multi-field search syntax (e.g., no `id:123 city:Toronto` — one plain text input only)
+
+**Constraints**
+- 300ms debounce — a request fires 300ms after the user stops typing, not on every keystroke (value is adjustable during testing)
+- Minimum 2 characters — the server ignores the `q` parameter if fewer than 2 characters are provided; no request is sent for 0 or 1 character
+- Clearing the search box (0 characters) reverts the table to dropdown-only filtered results
+- HTMX only — search triggers `hx-get="/elevators"` with the `q` parameter included alongside all active filter values; no custom JS fetch calls
+
+**Prior Decisions**
+- The search input already exists in `platform/templates/index.html` with `hx-get="/elevators"`, `hx-trigger="input changed delay:300ms"`, `hx-include="#filters"`
+- The `/elevators` endpoint already accepts a `q` parameter and currently matches against elevator ID, location, license status, and device type
+- Required changes: restrict the `q` filter to elevator ID and location only; add a server-side check to ignore `q` values shorter than 2 characters
+
+**Task Breakdown**
+1. Update the `/elevators` endpoint in `platform/server.py` — restrict `q` filtering to `elevator_id` and `location` columns only
+2. Add a 2-character minimum check in the endpoint — if `len(q) < 2`, treat `q` as empty
+3. Verify the debounce delay is set to 300ms in the template (already in place from Module 2)
+4. Test: search + dropdown active together, single character does nothing, clearing search reverts results
+
+**Verification Criteria**
+- Typing 2 or more characters filters the table to rows where elevator ID or location contains the search term (case-insensitive)
+- Typing 1 character produces no table change and fires no server request
+- Clearing the search box returns the table to dropdown-only results
+- Search and dropdowns combine — results satisfy both the search term and any active dropdown values simultaneously
+- A search term that matches no rows shows the "No elevators match your filters" message
+- The table does not update on every keystroke — the 300ms debounce delay is visible
+
+---
+
+### Interaction 3: Sort Behavior
+
+**Outcomes**
+The table loads pre-sorted by License Expiry Date ascending — the most urgent elevators appear at the top without any user action. Three columns are sortable: Elevator ID, License Expiry Date, and Last Inspection Date. Clicking a column header sorts ascending; clicking the same header again reverses to descending. Sort persists when filters or search change. The sort state is independent of the detail panel.
+
+**Scope Boundaries**
+- Sortable columns: Elevator ID, License Expiry Date, Last Inspection Date only
+- Non-sortable columns: Location, Equipment Type, Device Status, License Status
+- No multi-column sort — only one column is active at a time
+- Sort state does not interact with the detail panel — opening or closing the panel does not reset or change the sort
+
+**Constraints**
+- HTMX only — clicking a column header sends `hx-get="/elevators"` with `clicked_sort` parameter; no JavaScript sort
+- Sort state is carried in hidden fields (`sort-field`, `sort-order`) inside the `#filters` form and included with every HTMX request
+- Default sort (License Expiry ascending) must be applied server-side on the initial page load — the table arrives pre-sorted, not sorted after load
+
+**Prior Decisions**
+- The `/elevators` endpoint already handles `sort`, `order`, and `clicked_sort` parameters and applies `sort_values` accordingly
+- Sort button out-of-band swaps (`hx-swap-oob`) already update button visual state (↑/↓/↕) in the response fragment
+- The server already supports sorting by `last_inspection` — only the clickable header button is missing from the template
+- Hidden fields `sort-field` and `sort-order` are already in the `#filters` form; their default values must be updated to `license_expiry` and `asc`
+
+**Task Breakdown**
+1. Update the `/` route in `platform/server.py` to apply `sort_values("license_expiry", ascending=True)` before rendering the initial page
+2. Update the hidden field defaults in `platform/templates/index.html`: `sort-field` value → `"license_expiry"`, `sort-order` value → `"asc"`
+3. Add a Last Inspection Date clickable header button to the table in the template, following the same pattern as the Elevator ID and License Expiry buttons
+4. Verify sort persists when status filter, city filter, or search is changed
+5. Verify opening and closing the detail panel does not affect sort state
+
+**Verification Criteria**
+- Page loads with the table already sorted by License Expiry Date ascending — no click required
+- Clicking License Expiry Date toggles ascending → descending → ascending on successive clicks
+- Clicking a different column header resets to ascending on the new column
+- The active sort column header is visually highlighted; inactive columns display ↕
+- Applying a status filter, city filter, or search term while sorted preserves the current sort order
+- Last Inspection Date column header is clickable and sorts correctly in both directions
+- Opening or closing the detail panel does not change the active sort column or direction
+- Sort, filters, and search all apply simultaneously in a single server request
+
 
