@@ -195,5 +195,132 @@ def elevators():
     return resp
 
 
+@app.route("/elevator/<int:elevator_id>")
+def elevator_detail(elevator_id):
+    row = df[df["elevator_id"] == elevator_id]
+    if row.empty:
+        return "Elevator not found", 404
+
+    elev = row.iloc[0]
+
+    # --- Inspection history from source file ---
+    insp_df = pd.read_csv(BASE.parent / "data" / "inspection.csv")
+    insp_df.columns = insp_df.columns.str.strip()
+    insp_records = insp_df[insp_df["ElevatingDevicesNumber"] == elevator_id].copy()
+    insp_records["Latest_INSPECTION_Date"] = pd.to_datetime(
+        insp_records["Latest_INSPECTION_Date"], errors="coerce"
+    )
+    insp_records = insp_records.sort_values("Latest_INSPECTION_Date", ascending=False)
+
+    insp_rows = ""
+    for _, r in insp_records.iterrows():
+        dt = r["Latest_INSPECTION_Date"].strftime("%Y-%m-%d") if pd.notna(r["Latest_INSPECTION_Date"]) else "—"
+        insp_rows += (
+            f'<tr class="border-t border-gray-100">'
+            f'<td class="py-1.5 pr-4 font-mono text-xs text-gray-500">{dt}</td>'
+            f'<td class="py-1.5 pr-4 text-xs text-gray-600">{r["InspectionType"]}</td>'
+            f'<td class="py-1.5 text-xs text-gray-600">{r["InspectionOutcome"]}</td>'
+            f'</tr>'
+        )
+
+    # --- Incident history from source file ---
+    inc_df = pd.read_json(BASE.parent / "data" / "incident.json")
+    inc_records = inc_df[inc_df["elevating devices number"] == elevator_id]
+    incident_count = len(inc_records)
+
+    inc_rows = ""
+    for _, r in inc_records.iterrows():
+        dt = r.get("Date Of Occurrence", "—")
+        summary = r.get("Incident Summary", "—")
+        narrative = r.get("Reported occurrence narrative", "—")
+        inc_rows += (
+            f'<tr class="border-t border-gray-100">'
+            f'<td class="py-1.5 pr-4 font-mono text-xs text-gray-500">{dt}</td>'
+            f'<td class="py-1.5 pr-4 text-xs text-gray-600">{summary}</td>'
+            f'<td class="py-1.5 text-xs text-gray-500">{narrative}</td>'
+            f'</tr>'
+        )
+
+    # --- Alteration history from source file ---
+    alt_df = pd.read_json(BASE.parent / "data" / "altered.json")
+    alt_records = alt_df[alt_df["Elevating Devices Number"] == elevator_id]
+    alteration_count = len(alt_records)
+
+    alt_rows = ""
+    for _, r in alt_records.iterrows():
+        alt_rows += (
+            f'<tr class="border-t border-gray-100">'
+            f'<td class="py-1.5 pr-4 text-xs text-gray-600">{r["Alteration Type"]}</td>'
+            f'<td class="py-1.5 pr-4 text-xs text-gray-600">{r["Status of Alteration Request"]}</td>'
+            f'</tr>'
+        )
+
+    device_type = elev["device_type"] if pd.notna(elev["device_type"]) else "—"
+    expiry = elev["license_expiry"].strftime("%Y-%m-%d") if pd.notna(elev["license_expiry"]) else "—"
+
+    html = f"""
+<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-5">
+  <div class="flex items-start justify-between">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Elevator Detail</p>
+      <p class="text-lg font-bold text-gray-900 mt-0.5">#{elevator_id}</p>
+    </div>
+    <button onclick="document.getElementById('detail-panel').innerHTML=''"
+        class="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+  </div>
+
+  <div class="grid grid-cols-2 gap-3 text-xs">
+    <div><span class="text-gray-400">Type</span><p class="text-gray-700 mt-0.5">{device_type}</p></div>
+    <div><span class="text-gray-400">Status</span><p class="text-gray-700 mt-0.5">{elev["license_status"]}</p></div>
+    <div class="col-span-2"><span class="text-gray-400">Location</span><p class="text-gray-700 mt-0.5">{elev["location"]}</p></div>
+    <div><span class="text-gray-400">Licence Expiry</span><p class="text-gray-700 mt-0.5">{expiry}</p></div>
+    <div><span class="text-gray-400">Alterations</span><p class="text-gray-700 mt-0.5">{alteration_count}</p></div>
+  </div>
+
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+      Inspections ({len(insp_records)})
+    </p>
+    <table class="w-full">
+      <thead><tr>
+        <th class="text-left text-xs text-gray-400 pb-1 pr-4">Date</th>
+        <th class="text-left text-xs text-gray-400 pb-1 pr-4">Type</th>
+        <th class="text-left text-xs text-gray-400 pb-1">Outcome</th>
+      </tr></thead>
+      <tbody>{insp_rows if insp_rows else '<tr><td colspan="3" class="text-xs text-gray-400 py-2">No inspections on record</td></tr>'}</tbody>
+    </table>
+  </div>
+
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+      Incidents ({incident_count})
+    </p>
+    <table class="w-full">
+      <thead><tr>
+        <th class="text-left text-xs text-gray-400 pb-1 pr-4">Date</th>
+        <th class="text-left text-xs text-gray-400 pb-1 pr-4">Summary</th>
+        <th class="text-left text-xs text-gray-400 pb-1">Narrative</th>
+      </tr></thead>
+      <tbody>{inc_rows if inc_rows else '<tr><td colspan="3" class="text-xs text-gray-400 py-2">No incidents on record</td></tr>'}</tbody>
+    </table>
+  </div>
+
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+      Alterations ({alteration_count})
+    </p>
+    <table class="w-full">
+      <thead><tr>
+        <th class="text-left text-xs text-gray-400 pb-1 pr-4">Type</th>
+        <th class="text-left text-xs text-gray-400 pb-1">Status</th>
+      </tr></thead>
+      <tbody>{alt_rows if alt_rows else '<tr><td colspan="2" class="text-xs text-gray-400 py-2">No alterations on record</td></tr>'}</tbody>
+    </table>
+  </div>
+</div>
+"""
+    return html
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

@@ -834,3 +834,35 @@ The spec was written in one pass from the interview summaries without gaps. The 
 
 ---
 
+## Entry 27 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 2 — Server Tests and Detail Endpoint (TDD)
+
+---
+
+**Prompts:**
+> Install pytest, then write platform/test_server.py with three tests for existing endpoints (main page loads, status filter, sort order) and three TDD tests for GET /elevator/{id} that doesn't exist yet. Commit the failing tests before implementing the endpoint.
+
+> Implement GET /elevator/{id} — load static info from merged_elevator_data.csv, full inspection history from inspection.csv, incidents from incident.json, alterations from altered.json. Return an HTML fragment. Run all six tests and confirm they pass.
+
+**Prompting Technique:** TDD workflow — tests written and committed before implementation
+
+**Why this technique:** TDD forces the test to define correct behavior before any code exists. Writing the test first for `/elevator/{id}` required deciding what "correct" means — which elevator ID to use, what data must appear in the response, and what a 404 should look like — before touching the server. This produced clearer assertions than tests written after the fact.
+
+**What Happened:**
+- `platform/test_server.py` created with 6 tests (3 Part A, 3 Part B)
+- Part A tests passed immediately — existing endpoints behaved correctly
+- Part B tests committed at `6558cba` with 2 failing (endpoint returned 404 for all IDs) and 1 passing (the 404 test, which passed trivially because Flask returns 404 for unregistered routes)
+- `/elevator/{id}` endpoint implemented in `server.py`: reads static info from in-memory merged CSV, reads full inspection history, incident records, and alteration records from source files per request, returns an HTML fragment matching the HTMX architecture
+- All 6 tests passed on final run
+
+**TDD Workflow Decision:**
+Writing the 404 test revealed an important distinction: before the endpoint exists, Flask returns 404 for any unregistered route — so the 404 test passes trivially. This is not the same as the endpoint explicitly returning 404 for a missing elevator ID. After implementation, the test still passes but now for the right reason: the endpoint checks `df[df["elevator_id"] == elevator_id].empty` and explicitly returns `"Elevator not found", 404`. The test result looked the same before and after, but the behavior it verified changed. This is a TDD subtlety worth noting — a passing test does not always mean the behavior is correct until the implementation is in place.
+
+**What I Would Change:**
+I would add a fourth Part B test that verifies the response contains static fields explicitly (e.g., assert `"Passenger Elevator"` or the known equipment type for elevator 10 appears in the response). The current test checks for inspection outcome text but does not explicitly verify equipment type or location are rendered, which are required by the evaluation criteria.
+
+---
+
