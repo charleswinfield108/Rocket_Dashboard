@@ -977,7 +977,9 @@ Q: How will you test for leakage and what performance must be achieved?
 A: Three tests: no row uses data from its own or later inspections; first-ever inspection has zero/NaN for all prior aggregate features; no feature value derives from data after the inspection date. Model must beat 38% baseline on a time-based test split.
 
 **What Happened:**
-- Subagent explored `order.csv` — 162,172 rows, 15 columns, joined to `inspection.csv` via `inspectionnumber`, RISKSCORE has 25.6% missing values, most common value is 15.0. Screenshot saved to `assets/order_csv_subagent.png`.
+- Subagent explored `order.csv` — 162,172 rows, 15 columns, joined to `inspection.csv` via `inspectionnumber`, RISKSCORE has 25.6% missing values, most common value is 15.0.
+
+![order.csv subagent exploration output](../assets/order_csv_subagent.png)
 - SDD interview completed across all six elements. Key decision surfaced during Element 3: the leakage prevention rule must filter inspections by date first, then use those inspection numbers to filter orders — not the reverse.
 - Spec written to `docs/feature_engineering_spec.md` with enhanced language making it implementable by a developer with no prior project knowledge. Includes explicit outcome grouping table, column-by-column inclusion list, pseudocode for correct aggregation order, and pytest test descriptions.
 
