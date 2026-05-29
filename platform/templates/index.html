@@ -185,8 +185,30 @@
                     </button>
                   </th>
                   <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Location</th>
-                  <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Type</th>
-                  <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Status</th>
+                  <th class="px-5 py-3 text-left">
+                    <button id="sort-btn-device_type"
+                        hx-get="/elevators"
+                        hx-target="#tableBody"
+                        hx-swap="outerHTML"
+                        hx-include="#filters"
+                        hx-indicator="#loading-spinner"
+                        hx-vals='{"clicked_sort": "device_type"}'
+                        class="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600">
+                      Type <span>↕</span>
+                    </button>
+                  </th>
+                  <th class="px-5 py-3 text-left">
+                    <button id="sort-btn-license_status"
+                        hx-get="/elevators"
+                        hx-target="#tableBody"
+                        hx-swap="outerHTML"
+                        hx-include="#filters"
+                        hx-indicator="#loading-spinner"
+                        hx-vals='{"clicked_sort": "license_status"}'
+                        class="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600">
+                      Status <span>↕</span>
+                    </button>
+                  </th>
                   <th class="px-5 py-3 text-left">
                     <button id="sort-btn-license_expiry"
                         hx-get="/elevators"
@@ -220,8 +242,9 @@
 
         </div>
 
-        <!-- Detail Panel -->
-        <div id="detail-panel" class="w-96 flex-shrink-0"></div>
+        <!-- Detail Panel — collapses when empty -->
+        <div id="detail-panel" class="flex-shrink-0"></div>
+        <style>#detail-panel:empty { width: 0; }</style>
 
       </div>
     </div>

@@ -172,7 +172,7 @@ def elevators():
             filtered["location"].str.contains(q, case=False, na=False)
         )
         filtered = filtered[mask]
-    if active_sort in ("elevator_id", "license_expiry", "last_inspection"):
+    if active_sort in ("elevator_id", "license_expiry", "last_inspection", "device_type", "license_status"):
         filtered = filtered.sort_values(active_sort, ascending=(order != "desc"))
 
     today_ts  = pd.Timestamp.today().normalize()
@@ -180,7 +180,8 @@ def elevators():
 
     total   = len(df)
     count   = len(filtered)
-    rows    = build_rows(filtered)
+    PAGE    = 500
+    rows    = build_rows(filtered.head(PAGE))
 
     f_active   = int((filtered["license_status"] == "ACTIVE").sum())
     f_inactive = int((filtered["license_status"] != "ACTIVE").sum())
@@ -207,7 +208,7 @@ def elevators():
     fragment = (
         f'<tbody id="tableBody" class="divide-y divide-gray-50">{rows}{no_results}</tbody>\n'
         f'<span id="resultsCount" hx-swap-oob="true" class="text-xs text-gray-400">'
-        f'Showing {count} of {total} elevators</span>\n'
+        f'Showing {min(count, PAGE)} of {count} matching ({total} total)</span>\n'
         f'<input id="sort-field" name="sort" type="hidden" value="{active_sort}" hx-swap-oob="true">\n'
         f'<input id="sort-order" name="order" type="hidden" value="{order}" hx-swap-oob="true">\n'
         f'<button id="sort-btn-elevator_id" hx-swap-oob="true" '
@@ -225,6 +226,16 @@ def elevators():
         f'hx-get="/elevators" hx-target="#tableBody" hx-swap="outerHTML" hx-include="#filters" '
         f'hx-vals=\'{{"clicked_sort": "last_inspection"}}\'>'
         f'Last Inspection <span>{sort_icon("last_inspection")}</span></button>\n'
+        f'<button id="sort-btn-device_type" hx-swap-oob="true" '
+        f'class="{btn_cls("device_type")}" '
+        f'hx-get="/elevators" hx-target="#tableBody" hx-swap="outerHTML" hx-include="#filters" '
+        f'hx-vals=\'{{"clicked_sort": "device_type"}}\'>'
+        f'Type <span>{sort_icon("device_type")}</span></button>\n'
+        f'<button id="sort-btn-license_status" hx-swap-oob="true" '
+        f'class="{btn_cls("license_status")}" '
+        f'hx-get="/elevators" hx-target="#tableBody" hx-swap="outerHTML" hx-include="#filters" '
+        f'hx-vals=\'{{"clicked_sort": "license_status"}}\'>'
+        f'Status <span>{sort_icon("license_status")}</span></button>\n'
         f'<span id="count-val-all" hx-swap-oob="true">{count}</span>\n'
         f'<span id="count-val-active" hx-swap-oob="true">{f_active}</span>\n'
         f'<span id="count-val-inactive" hx-swap-oob="true">{f_inactive}</span>\n'
@@ -305,7 +316,7 @@ def elevator_detail(elevator_id):
     expiry = elev["license_expiry"].strftime("%Y-%m-%d") if pd.notna(elev["license_expiry"]) else "—"
 
     html = f"""
-<div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-5">
+<div class="w-96 bg-white rounded-xl border border-gray-100 shadow-sm p-5 space-y-5">
   <div class="flex items-start justify-between">
     <div>
       <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Elevator Detail</p>
