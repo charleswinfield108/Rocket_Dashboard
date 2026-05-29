@@ -930,3 +930,62 @@ When writing Prior Decisions in a spec, explicitly state the current state of th
 
 ---
 
+## Entry 29 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6) — subagent + main session
+
+**Task:** AND-103, Task 4 — Feature Engineering Specification (SDD Interview)
+
+---
+
+**Prompts:**
+
+> Use a subagent to explore order.csv: its columns, row count, how it connects to inspection.csv, and the distribution of the risk score column. Keep all raw output in the subagent — return only a summary.
+
+> Interview me about the inspection outcome prediction task using the six SDD elements. Ask one element at a time.
+
+*(Interview answers documented in Q&A below)*
+
+**Prompting Technique:** Two-phase SDD workflow — subagent exploration followed by structured interview
+
+**Why this technique:** The subagent kept raw exploration output (column dumps, value_counts) out of the main session context before the interview began. This is the same pattern used in AND-102 Task 5 and reinforces the habit of containing large exploratory output to protect the working context. The interview pattern then surfaced decisions one element at a time, preventing the blank-page problem when writing the spec.
+
+**Interview Q&A Record:**
+
+*Element 1 — Outcomes:*
+Q: What are you predicting, what evaluation metric will you use, and what baseline score must the model beat?
+A: Predicting `InspectionOutcome` from `inspection.csv`, grouped into Pass, Follow Up, and Fail/Shutdown. Primary metric is accuracy. Baseline is 38% — the proportion of Follow Up outcomes. The model must beat that.
+
+*Element 2 — Scope Boundaries:*
+Q: Which datasets and columns will you include, which will you exclude, and what timeframe will you cover?
+A: Use `inspection.csv`, `order.csv`, and `merged_elevator_data.csv`. Include all inspections regardless of year. Exclude free-text columns like `DIRECTIVE` and `ClauseText`. Static features from the merged CSV include equipment type and alteration count.
+
+*Element 3 — Constraints:*
+Q: What is your data leakage prevention strategy? Define precisely what "prior" means.
+A: For each inspection row, features must only use data from prior inspections and prior orders. Prior means strictly earlier by inspection date. The current inspection's outcome, type, and associated orders are excluded from its own feature row.
+
+*Element 4 — Prior Decisions:*
+Q: What specific work from Module 2 affects this pipeline?
+A: Join key is `ElevatingDevicesNumber` across all datasets. Inspection data has a one-to-many relationship with elevators — up to 24 inspections per device. The merged CSV provides static features including equipment type, alteration count, and cleaned Device Type categories.
+
+*Element 5 — Task Breakdown:*
+Q: What are the sequential steps from raw data to trained model?
+A: 1. Load and clean `inspection.csv`, group outcome categories. 2. Build prior inspection features per elevator per inspection date. 3. Join and aggregate prior order features from `order.csv`. 4. Join static features from `merged_elevator_data.csv`. 5. Encode categorical variables. 6. Handle missing values. 7. Save to `data/feature_matrix.csv`.
+
+*Element 6 — Verification Criteria:*
+Q: How will you test for leakage and what performance must be achieved?
+A: Three tests: no row uses data from its own or later inspections; first-ever inspection has zero/NaN for all prior aggregate features; no feature value derives from data after the inspection date. Model must beat 38% baseline on a time-based test split.
+
+**What Happened:**
+- Subagent explored `order.csv` — 162,172 rows, 15 columns, joined to `inspection.csv` via `inspectionnumber`, RISKSCORE has 25.6% missing values, most common value is 15.0. Screenshot saved to `assets/order_csv_subagent.png`.
+- SDD interview completed across all six elements. Key decision surfaced during Element 3: the leakage prevention rule must filter inspections by date first, then use those inspection numbers to filter orders — not the reverse.
+- Spec written to `docs/feature_engineering_spec.md` with enhanced language making it implementable by a developer with no prior project knowledge. Includes explicit outcome grouping table, column-by-column inclusion list, pseudocode for correct aggregation order, and pytest test descriptions.
+
+**SDD Workflow Decision:**
+The interview's Element 3 question ("define precisely what prior means") forced an explicit statement of the aggregation order that prevents leakage. Without the interview, this constraint would likely have been left implicit — written as "use only prior data" without specifying the filter sequence. The spec's Constraints section now includes a pseudocode block that any developer can follow step-by-step, making the leakage rule unambiguous. This is the most important thing the interview produced.
+
+**What I Would Change:**
+I would explore `order.csv` immediately before the Element 2 (Scope Boundaries) question rather than before the interview starts. Having the column list fresh at the moment of answering scope questions makes the answers more specific — I would have named the `DaystoComply` and `StatusofInspectionOrder` columns explicitly rather than saying "all numeric/categorical order columns."
+
+---
+
