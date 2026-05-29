@@ -38,6 +38,25 @@ STATUS_CLASSES = {
     "PENDING_RENEWAL": "bg-yellow-50 text-yellow-700 ring-1 ring-yellow-200",
 }
 
+OUTCOME_CLASSES = {
+    "Passed":              "bg-green-50 text-green-700 ring-1 ring-green-200",
+    "Passed Major":        "bg-green-50 text-green-700 ring-1 ring-green-200",
+    "Passed Sub":          "bg-green-50 text-green-700 ring-1 ring-green-200",
+    "All Orders Resolved": "bg-green-50 text-green-700 ring-1 ring-green-200",
+    "Complete":            "bg-green-50 text-green-700 ring-1 ring-green-200",
+    "Shutdown":            "bg-red-50 text-red-700 ring-1 ring-red-200",
+    "Vol Shut Down":       "bg-red-50 text-red-700 ring-1 ring-red-200",
+    "Fail Initial":        "bg-red-50 text-red-700 ring-1 ring-red-200",
+    "Fail Sub":            "bg-red-50 text-red-700 ring-1 ring-red-200",
+}
+
+def outcome_cls(outcome):
+    if outcome in OUTCOME_CLASSES:
+        return OUTCOME_CLASSES[outcome]
+    if "follow up" in str(outcome).lower() or "dc follow" in str(outcome).lower():
+        return "bg-yellow-50 text-yellow-700 ring-1 ring-yellow-200"
+    return "bg-gray-100 text-gray-500 ring-1 ring-gray-200"
+
 
 def build_rows(data):
     today     = date.today()
@@ -55,8 +74,12 @@ def build_rows(data):
         status_cls  = STATUS_CLASSES.get(row["license_status"], "bg-gray-100 text-gray-500 ring-1 ring-gray-200")
         device_type = row["device_type"] if pd.notna(row["device_type"]) else "—"
 
+        overdue_cls = " border-l-2 border-orange-400 bg-orange-50/30" if (not insp or insp < twelve_mo) else ""
         rows.append(f"""
-      <tr class="hover:bg-gray-50 transition-colors duration-75">
+      <tr class="hover:bg-gray-50 transition-colors duration-75 cursor-pointer{overdue_cls}"
+          hx-get="/elevator/{row['elevator_id']}"
+          hx-target="#detail-panel"
+          hx-swap="innerHTML">
         <td class="px-5 py-3 font-mono text-xs text-gray-600">{row['elevator_id']}</td>
         <td class="px-5 py-3 text-sm text-gray-700">{row['location']}</td>
         <td class="px-5 py-3 text-sm text-gray-500">{device_type}</td>
@@ -75,6 +98,8 @@ def index():
     twelve_mo   = today - pd.Timedelta(days=365)
     thirty_days = today + pd.Timedelta(days=30)
     ninety_days = today + pd.Timedelta(days=90)
+
+    df.sort_values("license_expiry", ascending=True, inplace=True)
 
     total    = len(df)
     active   = int((df["license_status"] == "ACTIVE").sum())
@@ -141,20 +166,28 @@ def elevators():
         filtered = filtered[filtered["license_status"] == status]
     if city and city != "All":
         filtered = filtered[filtered["city"] == city]
-    if q:
+    if len(q) >= 2:
         mask = (
             filtered["elevator_id"].astype(str).str.contains(q, case=False, na=False) |
-            filtered["location"].str.contains(q, case=False, na=False) |
-            filtered["license_status"].str.contains(q, case=False, na=False) |
-            filtered["device_type"].astype(str).str.contains(q, case=False, na=False)
+            filtered["location"].str.contains(q, case=False, na=False)
         )
         filtered = filtered[mask]
     if active_sort in ("elevator_id", "license_expiry", "last_inspection"):
         filtered = filtered.sort_values(active_sort, ascending=(order != "desc"))
 
-    total = len(df)
-    count = len(filtered)
-    rows  = build_rows(filtered)
+    today_ts  = pd.Timestamp.today().normalize()
+    twelve_ts = today_ts - pd.Timedelta(days=365)
+
+    total   = len(df)
+    count   = len(filtered)
+    rows    = build_rows(filtered)
+
+    f_active   = int((filtered["license_status"] == "ACTIVE").sum())
+    f_inactive = int((filtered["license_status"] != "ACTIVE").sum())
+    f_overdue  = int(
+        ((filtered["last_inspection"] < twelve_ts) | filtered["last_inspection"].isna()).sum()
+    )
+    f_expired  = int((filtered["license_expiry"] < today_ts).sum())
 
     no_results = (
         '<tr><td colspan="6" class="px-5 py-10 text-center text-sm text-gray-400">'
@@ -186,7 +219,17 @@ def elevators():
         f'class="{btn_cls("license_expiry")}" '
         f'hx-get="/elevators" hx-target="#tableBody" hx-swap="outerHTML" hx-include="#filters" '
         f'hx-vals=\'{{"clicked_sort": "license_expiry"}}\'>'
-        f'License Expiry <span>{sort_icon("license_expiry")}</span></button>'
+        f'License Expiry <span>{sort_icon("license_expiry")}</span></button>\n'
+        f'<button id="sort-btn-last_inspection" hx-swap-oob="true" '
+        f'class="{btn_cls("last_inspection")}" '
+        f'hx-get="/elevators" hx-target="#tableBody" hx-swap="outerHTML" hx-include="#filters" '
+        f'hx-vals=\'{{"clicked_sort": "last_inspection"}}\'>'
+        f'Last Inspection <span>{sort_icon("last_inspection")}</span></button>\n'
+        f'<span id="count-val-all" hx-swap-oob="true">{count}</span>\n'
+        f'<span id="count-val-active" hx-swap-oob="true">{f_active}</span>\n'
+        f'<span id="count-val-inactive" hx-swap-oob="true">{f_inactive}</span>\n'
+        f'<span id="count-val-overdue" hx-swap-oob="true">{f_overdue}</span>\n'
+        f'<span id="count-val-expired" hx-swap-oob="true">{f_expired}</span>'
     )
 
     resp = make_response(fragment)
@@ -215,11 +258,14 @@ def elevator_detail(elevator_id):
     insp_rows = ""
     for _, r in insp_records.iterrows():
         dt = r["Latest_INSPECTION_Date"].strftime("%Y-%m-%d") if pd.notna(r["Latest_INSPECTION_Date"]) else "—"
+        oc = outcome_cls(r["InspectionOutcome"])
         insp_rows += (
             f'<tr class="border-t border-gray-100">'
             f'<td class="py-1.5 pr-4 font-mono text-xs text-gray-500">{dt}</td>'
             f'<td class="py-1.5 pr-4 text-xs text-gray-600">{r["InspectionType"]}</td>'
-            f'<td class="py-1.5 text-xs text-gray-600">{r["InspectionOutcome"]}</td>'
+            f'<td class="py-1.5 text-xs">'
+            f'<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium {oc}">'
+            f'{r["InspectionOutcome"]}</span></td>'
             f'</tr>'
         )
 
