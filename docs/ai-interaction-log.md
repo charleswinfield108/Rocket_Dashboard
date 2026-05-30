@@ -991,3 +991,154 @@ I would explore `order.csv` immediately before the Element 2 (Scope Boundaries) 
 
 ---
 
+## Entry 30 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 5 — TDD Test Authoring (feature matrix correctness)
+
+---
+
+**Prompt:**
+> create intelligence/test_features.py with pytest tests that define what a correct feature matrix looks like:
+> Test that no row's prior-inspection features use data from that row's inspection or any later inspection. Pick a specific elevator you know from your Module 2 data exploration. Manually count its prior inspections for a specific inspection date, and assert that the feature matrix matches your manual count.
+> Test that an elevator's first-ever inspection has zero (or NaN) for all prior-inspection aggregate features (there is no prior history to aggregate).
+> Test that the feature matrix contains no future information: for a given inspection date, no feature value is derived from data after that date.
+
+**Prompting Technique:** TDD specification via concrete assertions — force manual data verification before any implementation is written
+
+**Why this technique:** Writing tests before the pipeline prevents the most common feature engineering mistake: building features that look correct in isolation but silently use future data. By requiring a manual count from raw CSV data, the prompt forces precise knowledge of what the answer should be before any code produces it. The three-test structure maps exactly to the three leakage failure modes defined in the spec: row-level leakage, first-row edge case, and order-table leakage.
+
+**What Happened:**
+- Claude explored the raw data to select well-suited test elevators: elevator 17489 (24 inspections, rich history) for leakage checks, and elevator 23920 (exactly 1 inspection in the dataset) for the first-inspection baseline
+- Manually counted prior inspections for elevator 17489 at 2014-02-12: 9 total (Pass=2, Follow Up=3, Fail=4), verified by running Python against inspection.csv before any test was written
+- Manually counted prior orders: 15 orders linked to the 9 prior inspections; 20 orders linked to current/future inspections (combined = 35) — the leakage "smoking gun" number
+- `test_features.py` written with 3 test classes and 12 test methods, all failing with `FileNotFoundError` on the missing `data/feature_matrix.csv`
+- One test (`test_raw_future_order_count_matches_expectation`) passes immediately because it reads raw source data directly — confirms the manual counts are valid before any pipeline is built
+
+**Key Decision — What to Assert:**
+The prompt asked to "manually count prior inspections," but a count alone is weak — the test passes if the pipeline happens to produce the right total even with wrong individual buckets. The tests assert the full breakdown (pass=2, followup=3, fail=4 individually) plus the sum, so any miscategorisation of outcomes fails. The order count test additionally checks that the feature value is neither the future total (35) nor something unexplained — not just that it equals 15.
+
+**What I Would Change:**
+The `days_since_last_inspection` column was not tested for the leakage case (elevator 17489 at 2014-02-12 should be 14 days since the prior inspection on 2014-01-29). Adding a fourth assertion on a continuous feature would give broader coverage of the pipeline's date arithmetic beyond just the count features.
+
+---
+
+## Entry 31 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6) — Plan Mode + implementation
+
+**Task:** AND-103, Task 5 — Feature Engineering Pipeline Implementation
+
+---
+
+**Prompts:**
+> Use Plan Mode (Shift+Tab) to have Claude Code plan the implementation from your spec. Review the plan. If you want to edit it, use Ctrl+G to open it in your editor. Include the full plan content (from first line to last) in your AI Interaction Log.
+
+*(Plan reviewed and approved without edits)*
+
+**Prompting Technique:** Plan Mode with spec-driven implementation — separate the design step from the coding step
+
+**Why this technique:** The feature engineering pipeline has one correctness constraint (leakage prevention) that is easy to get subtly wrong in implementation even when understood in principle. Using Plan Mode before writing any code surfaces the algorithm choice — and its correctness argument — before any code is committed. If the algorithm is wrong, the plan is where to catch it, not during test debugging.
+
+**Approved Plan (full content):**
+
+```
+# Plan: AND-103 Task 5 — Feature Engineering Notebook
+
+## Context
+
+The TDD tests in `intelligence/test_features.py` are written and committed (all failing —
+`data/feature_matrix.csv` does not exist). This plan implements the feature engineering
+pipeline in `intelligence/feature_engineering.ipynb` following the 7-step spec in
+`docs/feature_engineering_spec.md`. When executed, the notebook produces
+`data/feature_matrix.csv`, which makes all 12 tests pass.
+
+## Critical files
+
+| File | Role |
+|---|---|
+| `intelligence/feature_engineering.ipynb` | Create from scratch — the implementation |
+| `intelligence/test_features.py` | Already written — defines required column names |
+| `docs/feature_engineering_spec.md` | Source of truth for steps, constraints, and column definitions |
+| `data/inspection.csv` | 143,181 rows — base dataset |
+| `data/order.csv` | 162,172 rows — 25.6% RISKSCORE null |
+| `data/merged_elevator_data.csv` | 43,251 rows — static elevator features |
+
+## Implementation Plan
+
+### Notebook structure
+
+Follow `intelligence/etl_pipeline.ipynb` conventions:
+- Top-level markdown headers: `## AND-103 Task 5: Step N — <title>`
+- `print(f'{len(df):,}')` before/after each major operation
+- One logical transformation per cell
+- Narrative comments explaining the "why"
+
+### Step 2 — Build prior inspection features (key algorithmic step)
+
+Leakage-safe pattern: aggregate by date first, then cumulate and shift — never loop row by row.
+
+Daily aggregate per (elevator, date), then:
+  cumsum + shift(1) within each elevator group → "strictly before this date"
+
+days_since_last_inspection: NaN for first inspection — do NOT fill (0 would falsely imply
+the elevator was inspected that same day).
+
+rolling_pass_rate: expanding window (prior_pass_count / prior_total_count).
+Justified: sparse inspection history makes a fixed window wasteful.
+
+### Step 3 — Build prior order features
+
+Leakage-safe pattern: map orders to their inspection's date via inspectionnumber,
+then the same daily cumsum + shift.
+
+RISKSCORE nulls (25.6%): median imputation (15.0) before aggregating.
+Median chosen over mean because distribution is heavily right-skewed (max > 20,000).
+
+prior_mean_riskscore: computed as cumulative risk sum / cumulative count to avoid
+averaging of averages distortion.
+
+### Step 5 — Encode categorical variables
+
+Two columns encoded as dummies:
+  1. Device Type (7 categories, already cleaned in AND-102 Task 5)
+  2. most_recent_prior_outcome (4 classes + NaN → NaN gets its own indicator column)
+
+InspectionType of the current row is NOT encoded — the spec explicitly excludes it as
+leakage (the type of an inspection cannot be known before the inspection occurs).
+
+### Step 6 — Handle missing values
+
+  prior_pass_count / prior_followup_count / prior_fail_count → fill NaN with 0
+  rolling_pass_rate → fill NaN with 0
+  days_since_last_inspection → KEEP NaN (semantically wrong to fill with 0)
+  prior_mean_riskscore → fill NaN with global median
+  alteration_count → fill NaN with 0
+
+### Verification
+
+cd intelligence && /usr/bin/python3 -m jupyter nbconvert --to notebook --execute \
+  feature_engineering.ipynb --output feature_engineering.ipynb \
+  --ExecutePreprocessor.timeout=300
+
+python3 -m pytest intelligence/test_features.py -v
+All 12 tests must pass.
+```
+
+**What Happened:**
+- Plan Mode used to design the core algorithm before writing any notebook code
+- Core algorithmic insight: **daily-aggregate + cumsum + shift(1)**. Collapsing to one row per (elevator, date) before cumulating means multiple inspections on the same date are treated atomically — none can "see" the others. `shift(1)` then ensures the current date's contribution is excluded from its own features. This runs in O(n log n) vs. O(n²) for a naive row-by-row loop over 143k rows.
+- One implementation issue caught during prototyping: `order.csv` already has an `ElevatingDevicesNumber` column, so merging with `insp_map` produced `_x / _y` suffix collision. Fixed by joining only the date column from `insp_map`, not re-joining the elevator ID.
+- RISKSCORE nulls (25.6%): global median imputation (15.0) applied before daily aggregation. Median used because the distribution has extreme outliers (max > 20,000) that inflate the mean.
+- `days_since_last_inspection` intentionally kept as NaN for the 43,324 first-ever inspections — filling to 0 would be semantically wrong.
+- Feature matrix produced: 143,181 rows × 22 columns. All 12 tests passed on first notebook execution.
+
+**SDD Constraint Verified in Implementation:**
+The spec's "correct aggregation order" pseudocode (filter inspections by date → collect inspection numbers → filter orders) is what the daily-aggregate approach implements structurally. The cumsum+shift pattern makes the leakage constraint architectural rather than conditional: there is no code path that can accidentally include future orders, because future dates can only enter the computation after a shift that would place them in the future, not the past.
+
+**What I Would Change:**
+The rolling_pass_rate could include a second version with a fixed 5-inspection window alongside the expanding window, giving the model both a long-run signal and a recent-form signal. A single expanding-window feature may miss recent deteriorations in elevator condition. This would be worth adding in Task 6 if model performance is below target.
+
+---
+
