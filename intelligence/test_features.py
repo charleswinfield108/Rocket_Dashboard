@@ -1,9 +1,8 @@
 """
 TDD tests for the feature engineering pipeline (AND-103 Task 5).
 
-All tests load data/feature_matrix.csv produced by Step 7 of
-intelligence/feature_engineering.ipynb. They will fail with a
-FileNotFoundError until the notebook is executed and the CSV is written.
+All tests load data/feature_matrix.csv produced by intelligence/feature_engineering.ipynb.
+They will fail with a FileNotFoundError until the notebook is executed.
 
 Manual verification performed against raw data before implementation:
 
@@ -13,12 +12,20 @@ For the inspection dated 2014-02-12 (InspectionNumber 4794466):
     2012-02-23 Shutdown, 2012-03-05 Shutdown, 2012-03-07 Shutdown,
     2012-03-08 Shutdown, 2012-03-16 Passed, 2013-10-24 Follow up ×2,
     2014-01-29 All Orders Resolved, 2014-01-29 Follow up
-  Outcome-class breakdown: prior_pass_count=2, prior_followup_count=3, prior_fail_count=4
+  Per-class breakdown (new threshold-grouped outcome classes):
+    prior_oc_shutdown=4, prior_oc_follow_up=3,
+    prior_oc_passed=1, prior_oc_all_orders_resolved=1
+  Total prior inspections: 9
   Orders linked to prior inspections: 15
   Orders linked to current/future inspections (must be excluded): 20
 
 Elevator 23920 — exactly 1 inspection in the dataset (2011-01-10, Passed).
   No prior history exists; all lookback features must be 0 or NaN.
+
+Column name changes from the initial notebook version:
+  - Latest_INSPECTION_Date → InspectionDate (renamed in Step 9)
+  - prior_pass_count / prior_followup_count / prior_fail_count (old 4-class mapping)
+    → prior_inspection_count (total) + prior_oc_{class} per threshold-grouped class
 """
 
 import math
@@ -33,7 +40,7 @@ ORDER_PATH = "data/order.csv"
 
 @pytest.fixture(scope="module")
 def fm():
-    df = pd.read_csv(FEATURE_MATRIX_PATH, parse_dates=["Latest_INSPECTION_Date"])
+    df = pd.read_csv(FEATURE_MATRIX_PATH, parse_dates=["InspectionDate"])
     return df
 
 
@@ -59,10 +66,13 @@ class TestNoPriorFeatureUsesCurrentOrFutureInspection:
     Elevator 17489, inspection date 2014-02-12.
 
     Manually counted prior inspections (date < 2014-02-12): 9 total.
-    Class breakdown: Pass=2, Follow Up=3, Fail/Shutdown=4.
+    Per threshold-grouped outcome class:
+      prior_oc_shutdown=4, prior_oc_follow_up=3,
+      prior_oc_passed=1, prior_oc_all_orders_resolved=1
+    Sum of all prior_oc_* must equal 9.
 
-    Any count that exceeds these values — or sums to more than 9 — indicates
-    the pipeline included the current inspection or later ones in its aggregate.
+    Any value above 9 (or individual class counts above their expected values)
+    indicates that the current or a future inspection was included in the aggregate.
     """
 
     ELEV_ID = 17489
@@ -71,7 +81,7 @@ class TestNoPriorFeatureUsesCurrentOrFutureInspection:
     def _get_row(self, fm):
         mask = (
             (fm["ElevatingDevicesNumber"] == self.ELEV_ID)
-            & (fm["Latest_INSPECTION_Date"] == self.TARGET_DATE)
+            & (fm["InspectionDate"] == self.TARGET_DATE)
         )
         rows = fm[mask]
         assert len(rows) == 1, (
@@ -80,38 +90,39 @@ class TestNoPriorFeatureUsesCurrentOrFutureInspection:
         )
         return rows.iloc[0]
 
-    def test_prior_pass_count(self, fm):
+    def test_total_prior_inspection_count_is_nine(self, fm):
         row = self._get_row(fm)
-        assert row["prior_pass_count"] == 2, (
-            "Elevator 17489 had 2 prior Pass outcomes before 2014-02-12: "
-            "2012-03-16 (Passed) and 2014-01-29 (All Orders Resolved). "
-            f"Got {row['prior_pass_count']}."
+        assert row["prior_inspection_count"] == 9, (
+            "Elevator 17489 had exactly 9 prior inspections before 2014-02-12. "
+            f"Got {row['prior_inspection_count']}. "
+            "A higher value means the current or future inspections are being included; "
+            "a lower value means prior inspections are being dropped."
         )
 
-    def test_prior_followup_count(self, fm):
+    def test_prior_oc_shutdown_is_four(self, fm):
         row = self._get_row(fm)
-        assert row["prior_followup_count"] == 3, (
-            "Elevator 17489 had 3 prior Follow-Up outcomes before 2014-02-12: "
-            "2013-10-24 (Follow up ×2) and 2014-01-29 (Follow up). "
-            f"Got {row['prior_followup_count']}."
+        assert row["prior_oc_shutdown"] == 4, (
+            "Elevator 17489 had 4 prior Shutdown outcomes before 2014-02-12 "
+            "(2012-02-23, 2012-03-05, 2012-03-07, 2012-03-08). "
+            f"Got {row['prior_oc_shutdown']}."
         )
 
-    def test_prior_fail_count(self, fm):
+    def test_prior_oc_follow_up_is_three(self, fm):
         row = self._get_row(fm)
-        assert row["prior_fail_count"] == 4, (
-            "Elevator 17489 had 4 prior Fail/Shutdown outcomes before 2014-02-12: "
-            "Shutdown on 2012-02-23, 2012-03-05, 2012-03-07, and 2012-03-08. "
-            f"Got {row['prior_fail_count']}."
+        assert row["prior_oc_follow_up"] == 3, (
+            "Elevator 17489 had 3 prior Follow up outcomes before 2014-02-12 "
+            "(2013-10-24 ×2, 2014-01-29 ×1). "
+            f"Got {row['prior_oc_follow_up']}."
         )
 
-    def test_total_prior_count_is_nine(self, fm):
+    def test_prior_oc_passed_plus_all_orders_resolved_is_two(self, fm):
         row = self._get_row(fm)
-        total = row["prior_pass_count"] + row["prior_followup_count"] + row["prior_fail_count"]
-        assert total == 9, (
-            "Sum of prior pass+followup+fail counts for elevator 17489 on 2014-02-12 "
-            "should be 9 (all 9 prior inspections fall into a known outcome class). "
-            f"Got {total}. If total > 9, the current or future inspections are being "
-            "counted; if total < 9, some prior inspections are being dropped."
+        total_pass = row["prior_oc_passed"] + row["prior_oc_all_orders_resolved"]
+        assert total_pass == 2, (
+            "Elevator 17489 had 2 prior positive outcomes before 2014-02-12: "
+            "1 Passed (2012-03-16) and 1 All Orders Resolved (2014-01-29). "
+            f"Got prior_oc_passed={row['prior_oc_passed']}, "
+            f"prior_oc_all_orders_resolved={row['prior_oc_all_orders_resolved']}."
         )
 
 
@@ -133,7 +144,7 @@ class TestFirstInspectionHasZeroPriorFeatures:
     def _get_row(self, fm):
         mask = (
             (fm["ElevatingDevicesNumber"] == self.ELEV_ID)
-            & (fm["Latest_INSPECTION_Date"] == self.TARGET_DATE)
+            & (fm["InspectionDate"] == self.TARGET_DATE)
         )
         rows = fm[mask]
         assert len(rows) == 1, (
@@ -142,25 +153,11 @@ class TestFirstInspectionHasZeroPriorFeatures:
         )
         return rows.iloc[0]
 
-    def test_prior_pass_count_is_zero(self, fm):
+    def test_prior_inspection_count_is_zero(self, fm):
         row = self._get_row(fm)
-        assert row["prior_pass_count"] == 0, (
-            f"prior_pass_count should be 0 for a first-ever inspection; "
-            f"got {row['prior_pass_count']}"
-        )
-
-    def test_prior_followup_count_is_zero(self, fm):
-        row = self._get_row(fm)
-        assert row["prior_followup_count"] == 0, (
-            f"prior_followup_count should be 0 for a first-ever inspection; "
-            f"got {row['prior_followup_count']}"
-        )
-
-    def test_prior_fail_count_is_zero(self, fm):
-        row = self._get_row(fm)
-        assert row["prior_fail_count"] == 0, (
-            f"prior_fail_count should be 0 for a first-ever inspection; "
-            f"got {row['prior_fail_count']}"
+        assert row["prior_inspection_count"] == 0, (
+            f"prior_inspection_count should be 0 for a first-ever inspection; "
+            f"got {row['prior_inspection_count']}"
         )
 
     def test_days_since_last_inspection_is_nan(self, fm):
@@ -205,7 +202,7 @@ class TestNoFutureOrderDataInFeatures:
     def _get_row(self, fm):
         mask = (
             (fm["ElevatingDevicesNumber"] == self.ELEV_ID)
-            & (fm["Latest_INSPECTION_Date"] == self.TARGET_DATE)
+            & (fm["InspectionDate"] == self.TARGET_DATE)
         )
         rows = fm[mask]
         assert len(rows) == 1
@@ -226,7 +223,7 @@ class TestNoFutureOrderDataInFeatures:
         """
         Sanity-check the raw data: confirm it still contains the 20 future/current
         orders that should be excluded. If this assertion fails, the source data
-        changed and the expected_prior_order_count above must be re-verified.
+        changed and EXPECTED_PRIOR_ORDER_COUNT above must be re-verified.
         """
         future_insp_nums = raw_inspection[
             (raw_inspection["ElevatingDevicesNumber"] == self.ELEV_ID)
