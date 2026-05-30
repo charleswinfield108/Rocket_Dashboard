@@ -1201,3 +1201,81 @@ The city extraction function produces some noise categories (MILLS → Erin Mill
 
 ---
 
+## Entry 33 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 6 Part A — ML Pipeline Notebook
+
+---
+
+**Prompts:**
+> Install scikit-learn if not already installed. In `intelligence/ml_pipeline.ipynb`, create a new notebook structured with markdown subheaders for each major step. First step only: load `data/feature_matrix.csv` and calculate the baseline accuracy score — the accuracy achieved by always predicting the most common class in InspectionOutcome. Print the most common class, its frequency, and the baseline score.
+
+> Add a train/test split step. Split on `InspectionDate` using a time-based split, approximately 80% in train. Log the exact cutoff date, train row count, and test row count. Do not use a random split. Explain in a markdown cell why a random split would cause data leakage for this dataset.
+
+> Add a modeling section. Build a scikit-learn `Pipeline` that chains preprocessing and a classifier. Test at least two model types. For each model: reason through why it is a reasonable choice for multi-class classification on tabular inspection data before implementing; train and evaluate; add SelectKBest with `mutual_info_classif`; re-train and re-evaluate. Document both scores in a summary table. After testing all models, select the best performer and state: which model, which metric, the score, and how it compares to baseline. Justify the selection.
+
+**Prompting Technique:** Incremental step-by-step notebook construction — one prompt per step, each step committed before the next is specified
+
+**Why this technique:** Building a notebook one step at a time prevents the common failure mode of a "write it all at once" prompt producing a notebook with plausible-looking but incorrect intermediate outputs. Each step is small enough to verify before proceeding: the baseline cell runs and prints the right number before the split cell is added; the split cell logs the right row counts before any model is trained. Errors are localised to one step rather than requiring a full-notebook debug.
+
+**What Happened:**
+
+*Step 1 — Baseline:*
+- Most common class: "Follow up" (54,605 of 143,181 rows = 38.1%). This is the floor any model must beat.
+
+*Step 2 — Time-based split:*
+- 80/20 split by `InspectionDate`. Cutoff: 2015-12-16. Train: 114,544 rows; test: 28,637 rows.
+- Leakage explanation in markdown: a random split places, e.g., a 2012 inspection in the test set while a 2016 row for the same elevator — whose `prior_oc_*` features already aggregate the 2012 outcome — lands in training. The model is evaluated on data it has already seen indirectly through its features.
+- Note: the test-set effective baseline (always predict "Follow up" on 2016+ rows) is 29.0%, not 38.1%, because "Follow up" drops from 40% of training to 29% of test — a real distribution shift in the later data.
+
+*Step 3 — Modeling:*
+- Two pipelines per model type: without feature selection and with `SelectKBest(mutual_info_classif, k=30)`.
+- Logistic Regression: L2 regularisation handles sparse dummies; prior counts are near-linear signals; fast reference point. Score: 32.0% → 31.0% (after selection).
+- Random Forest: captures threshold effects in prior-shutdown counts; handles feature interactions implicitly; scale-invariant. Score: 34.8% → 33.6% (after selection).
+- All four beat the 29.0% test-set baseline. None beat the 38.1% full-dataset baseline, which is expected: the 13-class time-split problem is harder than the 4-class full-dataset scenario the baseline was calculated for.
+- `mutual_info_classif` scores features independently, so SelectKBest dropped complementary `prior_oc_*` columns whose joint signal matters — explaining why selection hurt both models.
+- `n_jobs=-1` was removed from LogisticRegression after a FutureWarning from sklearn 1.8 flagged the parameter as deprecated; the summary table was updated to show both the full-dataset and test-set baselines after the first version's `vs baseline` column showed misleading negative values.
+
+**Best Model:** Random Forest, all 93 features, 34.8% accuracy — +5.8 pp above the test-set baseline.
+
+**What I Would Change:**
+The feature selection step was specified as `SelectKBest(mutual_info_classif)` in the prompt. I would prefer a wrapper method (permutation importance from a fitted RF) which selects based on joint contribution — but since `mutual_info_classif` was explicitly requested I documented the limitation in the notebook's best-model markdown cell rather than substituting a different method without the user's knowledge.
+
+---
+
+## Entry 34 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 6 Part B — Methodology Report and Spec Actual vs. Planned
+
+---
+
+**Prompts:**
+> Open `docs/feature_engineering_spec.md` and add a new section at the bottom: "Actual vs. Planned." For each of the six SDD elements in the original spec (Outcomes, Scope Boundaries, Constraints, Prior Decisions, Task Breakdown, Verification Criteria), note what changed during implementation and why. If nothing changed for an element, write "No changes" with one sentence confirming it held as written.
+
+> Write `docs/methodology_report.md`. Keep it to 2–3 pages maximum. Cover exactly these four sections in order: Feature engineering summary, TDD experience, Model results, Lessons learned. Do not add sections beyond these four.
+
+**Prompting Technique:** Constrained document authoring — section list and length limit specified upfront, with explicit instruction to add nothing beyond the required sections
+
+**Why this technique:** Without a section constraint, methodology reports tend to grow: headers for "Introduction," "Background," "Future Work," and other filler sections that pad length without adding information. Specifying the exact four sections up front — and explicitly forbidding extras — forces every sentence to earn its place in one of those four categories. The 2–3 page limit forces prioritisation: which TDD finding was actually interesting, not just a restatement of what tests exist.
+
+**What Happened:**
+
+*Actual vs. Planned section (spec):*
+- Restructured from an earlier version that listed changes by number (1–7) rather than by SDD element. Mapping changes back to the six SDD elements exposed that Constraints had no changes — confirming the leakage rule held exactly as written — and that Prior Decisions had only one minor notation (alteration_count renamed, not changed). The structured format also made it clear that Scope Boundaries had more changes than any other element (two order.csv columns dropped, location feature added, InspectionType counts added), which is the element most likely to surprise a future developer.
+
+*Methodology report:*
+- The model results section originally had the RandomForest-after-selection score as 33.7% (carried over from notes); it was corrected to 33.6% (actual notebook output). The lessons-learned section originally referenced `f_classif` — corrected to `mutual_info_classif`, which is what the pipeline actually uses. An earlier draft included a "Train/test split" sub-table that the user had not requested; it was removed to keep the structure to exactly the four specified headings.
+- The TDD section identifies a specific finding: writing Test 1 required manually counting prior inspections before any code existed, which revealed that "All Orders Resolved" and "Passed" are separate outcome classes — a distinction that would have been invisible otherwise. This specificity is more useful than a generic claim that "TDD helped."
+
+**Key Decision — SDD Element Alignment:**
+Mapping each implementation change to its SDD element rather than listing changes chronologically surfaced the "no changes" findings for Constraints and Prior Decisions. These are as informative as the changes: they confirm that the leakage-prevention rule and the AND-102 data decisions survived implementation intact, which is the main correctness guarantee for the pipeline.
+
+**What I Would Change:**
+The methodology report is written after the implementation, which means its "lessons learned" section describes problems that have already been lived through. It would be more useful as a living document updated at each major decision point during implementation — the lesson about `SelectKBest` scoring features independently could have prompted a switch to permutation importance before the ML pipeline was committed, rather than appearing as a retrospective observation after the fact.
+
+---
+
