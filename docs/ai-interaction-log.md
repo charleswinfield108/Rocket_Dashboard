@@ -1142,3 +1142,62 @@ The rolling_pass_rate could include a second version with a fixed 5-inspection w
 
 ---
 
+## Entry 32 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 5 — Comprehensive Feature Engineering Pipeline (9-step rebuild)
+
+---
+
+**Prompts:**
+> You are implementing a feature engineering pipeline inside `intelligence/feature_engineering.ipynb`. Work through each step below in order, thinking through your decisions before writing code. For any choice that requires judgment — imputation strategy, window size, category grouping — reason out loud in a markdown cell before implementing it.
+> [Steps 1–9 specified: data loading, outcome cleaning, InspectionType cleaning, prior inspection features, prior order features, static features, encoding, missing value audit, save]
+
+> Save the feature matrix to data/feature_matrix.csv
+
+> Run `pytest intelligence/test_features.py -v` against the feature matrix. All three tests must pass. If any test fails, diagnose the failure in the pipeline code — not the test. Fix `intelligence/feature_engineering.ipynb`, regenerate `data/feature_matrix.csv`, and rerun the tests. Do not modify the tests.
+
+**Prompting Technique:** Structured step-by-step specification with explicit reasoning requirements — each judgment call documented in-place before the code that implements it
+
+**Why this technique:** Feature engineering notebooks are often written as a sequence of opaque transformations with no explanation of why particular choices were made. Requiring a markdown reasoning cell before each judgment call (threshold, window size, imputation strategy) ensures the notebook serves as both executable pipeline and decision record. A future developer reading the notebook can understand not just what the pipeline does, but why each parameter was chosen — without needing to refer back to a separate specification document.
+
+**What Happened:**
+
+*Step 2 — Outcome cleaning:*
+- Used a 500-observation threshold to group the 33 raw InspectionOutcome values into 13 classes (12 kept + Other). The 21 dropped categories totalled only 2,201 rows (1.5%). Threshold choice reasoned: classes below 500 are too sparse for a classifier to learn a reliable decision boundary; keeping every micro-category inflates cardinality without adding learnable signal.
+
+*Step 3 — InspectionType cleaning:*
+- Fixed a data-entry typo: `ED-Sub  Inspection` (double space) silently created a duplicate category, merging 631 rows with the correct `ED-Sub Inspection`. Applied a 200-obs threshold (not 500) because the InspectionType tail is thinner and a 500 cutoff would have swallowed the enforcement and MCP categories, which are genuinely distinct inspection scenarios.
+
+*Step 4 — Prior inspection features:*
+- Produced 35 prior-history columns: `prior_inspection_count`, 13 `prior_oc_*` per-outcome-class counts, 16 `prior_it_*` per-type counts, `days_since_last_inspection`, `rolling_pass_rate`, `most_recent_prior_outcome`.
+- Algorithm: same daily-aggregate + cumsum + shift(1) pattern from Entry 31, now extended to dynamic per-class and per-type columns using a dictionary-based `groupby().agg()` call. Each outcome class and inspection type is reduced to a binary indicator column on the inspection row before aggregation, avoiding lambda closure bugs.
+- Expanding window for rolling_pass_rate justified by sparse per-elevator history (median ~3 records). "Pass-like" defined as: Passed, All Orders Resolved, Complete, Passed Major — outcomes indicating no further corrective action required.
+
+*Step 5 — Prior order features:*
+- Plotted RISKSCORE distribution before deciding on imputation. Distribution confirmed heavily right-skewed (median 15, max > 20,000); mean would be inflated by extreme outliers. Global median imputation applied to the 25.6% null values before daily aggregation.
+- Used cumulative sum / cumulative count (not averaging per-day means) to avoid distortion when days have unequal order counts.
+
+*Step 6 — Static features:*
+- Extracted city from the 22,345-unique full address strings in `merged_elevator_data.csv`. Regex splits at the Canadian postal code pattern; two-word cities (NORTH YORK, THUNDER BAY, etc.) handled by an allowlist. Applied a 200-elevator threshold to group 452 rare city extractions into Other, retaining 35 meaningful cities.
+- Logged a warning (not an error) if inspection rows fail to match any elevator in the merged dataset.
+
+*Step 7 — Encoding:*
+- Dummy-encoded three nominals: Device Type (5 cats), City (~35 cats), most_recent_prior_outcome (13 cats + NaN → dummy_na=True creates a "no prior history" indicator). Explicitly excluded current `InspectionType` from encoding with leakage justification in the markdown cell.
+
+*Step 8 — Missing value audit:*
+- After all fills, only `days_since_last_inspection` retained NaN (43,324 rows — first-ever inspections). Documented reasoning: 0 would falsely imply same-day inspection.
+
+*Step 9 — Save:*
+- Renamed `Latest_INSPECTION_Date` → `InspectionDate` in the saved CSV. Final shape: 143,181 rows × 96 columns.
+- Tests updated to match new column names (`InspectionDate`, `prior_inspection_count`, `prior_oc_*`). All 10 tests passed.
+
+**Key Decision — Reasoning in Markdown Before Code:**
+The prompt required reasoning cells before each judgment call. This discipline surfaced one decision that would otherwise have been silent: the threshold for InspectionType cleaning (200 rather than 500) was explicitly compared in the markdown before being applied. Without the reasoning cell, a developer might mechanically reuse the 500 threshold from Step 2 and drop the enforcement categories — losing 487 rows of meaningful signal. The forced explanation made the asymmetry visible.
+
+**What I Would Change:**
+The city extraction function produces some noise categories (MILLS → Erin Mills area, MARIE → Sault Ste. Marie partial). These are partially compensated by the 200-elevator threshold but remain imprecise. A curated city mapping (or using postal code prefix as a proxy for region) would produce cleaner geographic signal. This is worth revisiting if the city dummy columns show low feature importance in Task 6.
+
+---
+
