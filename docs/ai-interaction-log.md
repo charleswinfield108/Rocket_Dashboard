@@ -773,3 +773,509 @@ Specifying the axis label style ("use theme names, not cluster numbers") in the 
 
 ---
 
+# AND-103 Spec-Driven Development
+
+---
+
+## Entry 25 — 2026-05-28
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 1 — Interaction Specification (SDD Interview)
+
+---
+
+**Prompt:**
+> Interview me about the three dashboard interactions — elevator detail panel, filter and search, and sort behavior — using the six SDD elements. Ask one element at a time.
+
+**Prompting Technique:** SDD interview pattern — Claude asks questions, user provides domain answers, user writes the spec
+
+**Why this technique:** The interview pattern prevents the blank-page problem by breaking spec-writing into targeted one-element-at-a-time questions. It forces implicit decisions to become explicit — constraints, prior decisions, and edge cases that would otherwise be left undefined surface naturally when answering direct questions. The spec content comes from domain knowledge, not Claude's assumptions.
+
+**What Happened:**
+Claude conducted a structured interview across all three interactions (detail panel, filter/search, sort behavior), covering all six SDD elements for each. Key decisions surfaced during the interview:
+
+- *Detail panel:* Full inspection/incident/alteration history must be read from source files (`inspection.csv`, `incident.json`, `altered.json`) per request — the merged CSV only holds the most recent inspection and a total alteration count, not full histories.
+- *Filter and search:* Search scope narrowed to elevator ID and location only (not equipment type or status) — the dropdowns already handle status/type filtering and adding them to search would create noise. 2-character minimum added to prevent single-keystroke requests.
+- *Sort behavior:* Default sort set to License Expiry ascending on page load — surfaces the most urgent elevators immediately without requiring user action. Last Inspection Date added as a third sortable column (server already supported it; only the header button was missing).
+
+**SDD Workflow Decision:**
+The interview revealed a gap that would have caused a bug: the assumption that the merged CSV contained full inspection history. Checking the actual columns mid-interview showed only `Latest_INSPECTION_Date` and `InspectionOutcome` — one record per elevator. This changed the prior decisions element for the detail panel: the endpoint must read source files per request rather than querying in-memory data. Discovering this during spec-writing (not during implementation) is exactly what the SDD process is designed to do.
+
+**What I Would Change:**
+I would explore the data files before the interview rather than mid-session. Having column lists for all source files ready at the start would have prevented the interruption and might have surfaced other assumptions worth questioning upfront.
+
+---
+
+## Entry 26 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 1 — Writing the Interaction Specification
+
+---
+
+**Prompt:**
+> Based on the three interview summaries (detail panel, filter and search, sort behavior), write the Interaction Specification section into docs/dashboard_spec.md using all six SDD elements for each interaction.
+
+**Prompting Technique:** Structured document generation from interview output
+
+**Why this technique:** The interview (Entry 25) produced three structured summaries covering all six SDD elements. Providing those summaries directly as input gave Claude precise, scoped content to work from — no assumptions, no invented decisions. The output matches the decisions made during the interview rather than Claude's defaults.
+
+**What Happened:**
+Claude wrote the full Interaction Specification section into `docs/dashboard_spec.md` covering all three interactions. Each interaction was structured with all six SDD elements: outcomes, scope boundaries, constraints, prior decisions, task breakdown, and verification criteria. Key content written:
+
+- *Detail panel:* Defined the `/elevator/{id}` endpoint as returning an HTML fragment; specified that full history must come from source files, not the merged CSV; documented the four-step task breakdown from panel container to endpoint implementation
+- *Filter and search:* Specified 2-character minimum and 300ms debounce as constraints; restricted search scope to elevator ID and location only; identified the exact changes needed to the existing `/elevators` endpoint
+- *Sort behavior:* Set License Expiry ascending as the server-side default on page load; added Last Inspection Date as the third sortable column; confirmed sort state independence from the detail panel
+
+**What I Would Change:**
+The spec was written in one pass from the interview summaries without gaps. The interview process produced complete enough answers that no clarifying questions were needed during writing. In future tasks I would follow the same pattern — complete the interview first, then write the spec as a separate step — rather than trying to do both simultaneously.
+
+---
+
+## Entry 27 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 2 — Server Tests and Detail Endpoint (TDD)
+
+---
+
+**Prompts:**
+> Install pytest, then write platform/test_server.py with three tests for existing endpoints (main page loads, status filter, sort order) and three TDD tests for GET /elevator/{id} that doesn't exist yet. Commit the failing tests before implementing the endpoint.
+
+> Implement GET /elevator/{id} — load static info from merged_elevator_data.csv, full inspection history from inspection.csv, incidents from incident.json, alterations from altered.json. Return an HTML fragment. Run all six tests and confirm they pass.
+
+**Prompting Technique:** TDD workflow — tests written and committed before implementation
+
+**Why this technique:** TDD forces the test to define correct behavior before any code exists. Writing the test first for `/elevator/{id}` required deciding what "correct" means — which elevator ID to use, what data must appear in the response, and what a 404 should look like — before touching the server. This produced clearer assertions than tests written after the fact.
+
+**What Happened:**
+- `platform/test_server.py` created with 6 tests (3 Part A, 3 Part B)
+- Part A tests passed immediately — existing endpoints behaved correctly
+- Part B tests committed at `6558cba` with 2 failing (endpoint returned 404 for all IDs) and 1 passing (the 404 test, which passed trivially because Flask returns 404 for unregistered routes)
+- `/elevator/{id}` endpoint implemented in `server.py`: reads static info from in-memory merged CSV, reads full inspection history, incident records, and alteration records from source files per request, returns an HTML fragment matching the HTMX architecture
+- All 6 tests passed on final run
+
+**TDD Workflow Decision:**
+Writing the 404 test revealed an important distinction: before the endpoint exists, Flask returns 404 for any unregistered route — so the 404 test passes trivially. This is not the same as the endpoint explicitly returning 404 for a missing elevator ID. After implementation, the test still passes but now for the right reason: the endpoint checks `df[df["elevator_id"] == elevator_id].empty` and explicitly returns `"Elevator not found", 404`. The test result looked the same before and after, but the behavior it verified changed. This is a TDD subtlety worth noting — a passing test does not always mean the behavior is correct until the implementation is in place.
+
+**What I Would Change:**
+I would add a fourth Part B test that verifies the response contains static fields explicitly (e.g., assert the known equipment type for elevator 10 appears in the response). The current test checks for inspection outcome text but does not explicitly verify equipment type or location are rendered.
+
+---
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 2 — Server Tests and Detail Endpoint (TDD)
+
+---
+
+**Prompts:**
+> Install pytest, then write platform/test_server.py with three tests for existing endpoints (main page loads, status filter, sort order) and three TDD tests for GET /elevator/{id} that doesn't exist yet. Commit the failing tests before implementing the endpoint.
+
+> Implement GET /elevator/{id} — load static info from merged_elevator_data.csv, full inspection history from inspection.csv, incidents from incident.json, alterations from altered.json. Return an HTML fragment. Run all six tests and confirm they pass.
+
+**Prompting Technique:** TDD workflow — tests written and committed before implementation
+
+**Why this technique:** TDD forces the test to define correct behavior before any code exists. Writing the test first for `/elevator/{id}` required deciding what "correct" means — which elevator ID to use, what data must appear in the response, and what a 404 should look like — before touching the server. This produced clearer assertions than tests written after the fact.
+
+**What Happened:**
+- `platform/test_server.py` created with 6 tests (3 Part A, 3 Part B)
+- Part A tests passed immediately — existing endpoints behaved correctly
+- Part B tests committed at `6558cba` with 2 failing (endpoint returned 404 for all IDs) and 1 passing (the 404 test, which passed trivially because Flask returns 404 for unregistered routes)
+- `/elevator/{id}` endpoint implemented in `server.py`: reads static info from in-memory merged CSV, reads full inspection history, incident records, and alteration records from source files per request, returns an HTML fragment matching the HTMX architecture
+- All 6 tests passed on final run
+
+**TDD Workflow Decision:**
+Writing the 404 test revealed an important distinction: before the endpoint exists, Flask returns 404 for any unregistered route — so the 404 test passes trivially. This is not the same as the endpoint explicitly returning 404 for a missing elevator ID. After implementation, the test still passes but now for the right reason: the endpoint checks `df[df["elevator_id"] == elevator_id].empty` and explicitly returns `"Elevator not found", 404`. The test result looked the same before and after, but the behavior it verified changed. This is a TDD subtlety worth noting — a passing test does not always mean the behavior is correct until the implementation is in place.
+
+**What I Would Change:**
+I would add a fourth Part B test that verifies the response contains static fields explicitly (e.g., assert `"Passenger Elevator"` or the known equipment type for elevator 10 appears in the response). The current test checks for inspection outcome text but does not explicitly verify equipment type or location are rendered, which are required by the evaluation criteria.
+
+---
+
+## Entry 28 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 3 — Front-End Polish and Advanced HTMX
+
+---
+
+**Prompts:**
+> Implement all Task 3 features: elevator detail panel (clicking a row opens a side panel via HTMX), visual status indicators (overdue row highlighting, inspection outcome badges), restrict search to elevator ID and location with 2-character minimum, out-of-band swaps to update summary card counts when filters change, loading indicator during server requests, and Last Inspection sort button. Run all tests to confirm nothing broke.
+
+**Prompting Technique:** Multi-feature implementation from spec — all requirements provided upfront in a single prompt with the spec as reference
+
+**Why this technique:** The interaction spec from Task 1 defined exactly what each feature should do, so a single comprehensive prompt was more efficient than sequential prompts. Providing the full feature list at once allowed Claude to plan the changes to both `server.py` and `index.html` as a coordinated set rather than making repeated partial changes that might conflict.
+
+**What Happened:**
+- Detail panel: each table row gained `hx-get="/elevator/{id}"`, `hx-target="#detail-panel"`, `hx-swap="innerHTML"`; a `#detail-panel` container added alongside the table in a flex layout
+- Overdue rows: rows where last inspection is >12 months ago styled with `border-l-2 border-orange-400 bg-orange-50/30` — visually distinguishable at a glance
+- Outcome badges: `OUTCOME_CLASSES` dict added to server; inspection history in the detail panel now shows colored pills (green = passed, yellow = follow up, red = shutdown/fail, gray = other)
+- Search restricted: `/elevators` `q` filter now matches elevator ID and location only; 1-character queries ignored server-side
+- OOB card counts: five `<span id="count-val-{key}">` elements added inside card count paragraphs; `/elevators` response includes OOB fragments updating all five counts to reflect filtered data
+- Loading indicator: `htmx-indicator` spinner added to table header bar; `hx-indicator="#loading-spinner"` added to form, table, sort buttons, and search input
+- Last Inspection sort button: clickable header added to template; OOB fragment added to server response
+- Default sort: `/` route applies `sort_values("license_expiry", ascending=True)` before render; hidden field defaults updated to `license_expiry`/`asc`
+- All 6 tests passed after implementation
+
+**SDD Gap Found During Implementation:**
+The Task 1 spec stated search should match elevator ID and location only, but the existing `/elevators` endpoint was also matching `license_status` and `device_type`. This was a prior decision not documented in the spec — the spec described the intended scope but did not note that the existing code exceeded it. The fix was a one-line change (remove two columns from the mask), but the gap means any developer reading only the spec would not have known to look for and remove the existing broader match. The spec should have included a "current state" note under Prior Decisions stating what the existing `q` filter matched before this change.
+
+**What I Would Change:**
+When writing Prior Decisions in a spec, explicitly state the current state of the code being changed — not just the intended state after the change. "The `/elevators` endpoint currently matches q against four fields; this task reduces it to two" is more actionable than "search matches elevator ID and location only."
+
+---
+
+## Entry 29 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6) — subagent + main session
+
+**Task:** AND-103, Task 4 — Feature Engineering Specification (SDD Interview)
+
+---
+
+**Prompts:**
+
+> Use a subagent to explore order.csv: its columns, row count, how it connects to inspection.csv, and the distribution of the risk score column. Keep all raw output in the subagent — return only a summary.
+
+> Interview me about the inspection outcome prediction task using the six SDD elements. Ask one element at a time.
+
+*(Interview answers documented in Q&A below)*
+
+**Prompting Technique:** Two-phase SDD workflow — subagent exploration followed by structured interview
+
+**Why this technique:** The subagent kept raw exploration output (column dumps, value_counts) out of the main session context before the interview began. This is the same pattern used in AND-102 Task 5 and reinforces the habit of containing large exploratory output to protect the working context. The interview pattern then surfaced decisions one element at a time, preventing the blank-page problem when writing the spec.
+
+**Interview Q&A Record:**
+
+*Element 1 — Outcomes:*
+Q: What are you predicting, what evaluation metric will you use, and what baseline score must the model beat?
+A: Predicting `InspectionOutcome` from `inspection.csv`, grouped into Pass, Follow Up, and Fail/Shutdown. Primary metric is accuracy. Baseline is 38% — the proportion of Follow Up outcomes. The model must beat that.
+
+*Element 2 — Scope Boundaries:*
+Q: Which datasets and columns will you include, which will you exclude, and what timeframe will you cover?
+A: Use `inspection.csv`, `order.csv`, and `merged_elevator_data.csv`. Include all inspections regardless of year. Exclude free-text columns like `DIRECTIVE` and `ClauseText`. Static features from the merged CSV include equipment type and alteration count.
+
+*Element 3 — Constraints:*
+Q: What is your data leakage prevention strategy? Define precisely what "prior" means.
+A: For each inspection row, features must only use data from prior inspections and prior orders. Prior means strictly earlier by inspection date. The current inspection's outcome, type, and associated orders are excluded from its own feature row.
+
+*Element 4 — Prior Decisions:*
+Q: What specific work from Module 2 affects this pipeline?
+A: Join key is `ElevatingDevicesNumber` across all datasets. Inspection data has a one-to-many relationship with elevators — up to 24 inspections per device. The merged CSV provides static features including equipment type, alteration count, and cleaned Device Type categories.
+
+*Element 5 — Task Breakdown:*
+Q: What are the sequential steps from raw data to trained model?
+A: 1. Load and clean `inspection.csv`, group outcome categories. 2. Build prior inspection features per elevator per inspection date. 3. Join and aggregate prior order features from `order.csv`. 4. Join static features from `merged_elevator_data.csv`. 5. Encode categorical variables. 6. Handle missing values. 7. Save to `data/feature_matrix.csv`.
+
+*Element 6 — Verification Criteria:*
+Q: How will you test for leakage and what performance must be achieved?
+A: Three tests: no row uses data from its own or later inspections; first-ever inspection has zero/NaN for all prior aggregate features; no feature value derives from data after the inspection date. Model must beat 38% baseline on a time-based test split.
+
+**What Happened:**
+- Subagent explored `order.csv` — 162,172 rows, 15 columns, joined to `inspection.csv` via `inspectionnumber`, RISKSCORE has 25.6% missing values, most common value is 15.0.
+
+![order.csv subagent exploration output](../assets/order_csv_subagent.png)
+- SDD interview completed across all six elements. Key decision surfaced during Element 3: the leakage prevention rule must filter inspections by date first, then use those inspection numbers to filter orders — not the reverse.
+- Spec written to `docs/feature_engineering_spec.md` with enhanced language making it implementable by a developer with no prior project knowledge. Includes explicit outcome grouping table, column-by-column inclusion list, pseudocode for correct aggregation order, and pytest test descriptions.
+
+**SDD Workflow Decision:**
+The interview's Element 3 question ("define precisely what prior means") forced an explicit statement of the aggregation order that prevents leakage. Without the interview, this constraint would likely have been left implicit — written as "use only prior data" without specifying the filter sequence. The spec's Constraints section now includes a pseudocode block that any developer can follow step-by-step, making the leakage rule unambiguous. This is the most important thing the interview produced.
+
+**What I Would Change:**
+I would explore `order.csv` immediately before the Element 2 (Scope Boundaries) question rather than before the interview starts. Having the column list fresh at the moment of answering scope questions makes the answers more specific — I would have named the `DaystoComply` and `StatusofInspectionOrder` columns explicitly rather than saying "all numeric/categorical order columns."
+
+---
+
+## Entry 30 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 5 — TDD Test Authoring (feature matrix correctness)
+
+---
+
+**Prompt:**
+> create intelligence/test_features.py with pytest tests that define what a correct feature matrix looks like:
+> Test that no row's prior-inspection features use data from that row's inspection or any later inspection. Pick a specific elevator you know from your Module 2 data exploration. Manually count its prior inspections for a specific inspection date, and assert that the feature matrix matches your manual count.
+> Test that an elevator's first-ever inspection has zero (or NaN) for all prior-inspection aggregate features (there is no prior history to aggregate).
+> Test that the feature matrix contains no future information: for a given inspection date, no feature value is derived from data after that date.
+
+**Prompting Technique:** TDD specification via concrete assertions — force manual data verification before any implementation is written
+
+**Why this technique:** Writing tests before the pipeline prevents the most common feature engineering mistake: building features that look correct in isolation but silently use future data. By requiring a manual count from raw CSV data, the prompt forces precise knowledge of what the answer should be before any code produces it. The three-test structure maps exactly to the three leakage failure modes defined in the spec: row-level leakage, first-row edge case, and order-table leakage.
+
+**What Happened:**
+- Claude explored the raw data to select well-suited test elevators: elevator 17489 (24 inspections, rich history) for leakage checks, and elevator 23920 (exactly 1 inspection in the dataset) for the first-inspection baseline
+- Manually counted prior inspections for elevator 17489 at 2014-02-12: 9 total (Pass=2, Follow Up=3, Fail=4), verified by running Python against inspection.csv before any test was written
+- Manually counted prior orders: 15 orders linked to the 9 prior inspections; 20 orders linked to current/future inspections (combined = 35) — the leakage "smoking gun" number
+- `test_features.py` written with 3 test classes and 12 test methods, all failing with `FileNotFoundError` on the missing `data/feature_matrix.csv`
+- One test (`test_raw_future_order_count_matches_expectation`) passes immediately because it reads raw source data directly — confirms the manual counts are valid before any pipeline is built
+
+**Key Decision — What to Assert:**
+The prompt asked to "manually count prior inspections," but a count alone is weak — the test passes if the pipeline happens to produce the right total even with wrong individual buckets. The tests assert the full breakdown (pass=2, followup=3, fail=4 individually) plus the sum, so any miscategorisation of outcomes fails. The order count test additionally checks that the feature value is neither the future total (35) nor something unexplained — not just that it equals 15.
+
+**What I Would Change:**
+The `days_since_last_inspection` column was not tested for the leakage case (elevator 17489 at 2014-02-12 should be 14 days since the prior inspection on 2014-01-29). Adding a fourth assertion on a continuous feature would give broader coverage of the pipeline's date arithmetic beyond just the count features.
+
+---
+
+## Entry 31 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6) — Plan Mode + implementation
+
+**Task:** AND-103, Task 5 — Feature Engineering Pipeline Implementation
+
+---
+
+**Prompts:**
+> Use Plan Mode (Shift+Tab) to have Claude Code plan the implementation from your spec. Review the plan. If you want to edit it, use Ctrl+G to open it in your editor. Include the full plan content (from first line to last) in your AI Interaction Log.
+
+*(Plan reviewed and approved without edits)*
+
+**Prompting Technique:** Plan Mode with spec-driven implementation — separate the design step from the coding step
+
+**Why this technique:** The feature engineering pipeline has one correctness constraint (leakage prevention) that is easy to get subtly wrong in implementation even when understood in principle. Using Plan Mode before writing any code surfaces the algorithm choice — and its correctness argument — before any code is committed. If the algorithm is wrong, the plan is where to catch it, not during test debugging.
+
+**Approved Plan (full content):**
+
+```
+# Plan: AND-103 Task 5 — Feature Engineering Notebook
+
+## Context
+
+The TDD tests in `intelligence/test_features.py` are written and committed (all failing —
+`data/feature_matrix.csv` does not exist). This plan implements the feature engineering
+pipeline in `intelligence/feature_engineering.ipynb` following the 7-step spec in
+`docs/feature_engineering_spec.md`. When executed, the notebook produces
+`data/feature_matrix.csv`, which makes all 12 tests pass.
+
+## Critical files
+
+| File | Role |
+|---|---|
+| `intelligence/feature_engineering.ipynb` | Create from scratch — the implementation |
+| `intelligence/test_features.py` | Already written — defines required column names |
+| `docs/feature_engineering_spec.md` | Source of truth for steps, constraints, and column definitions |
+| `data/inspection.csv` | 143,181 rows — base dataset |
+| `data/order.csv` | 162,172 rows — 25.6% RISKSCORE null |
+| `data/merged_elevator_data.csv` | 43,251 rows — static elevator features |
+
+## Implementation Plan
+
+### Notebook structure
+
+Follow `intelligence/etl_pipeline.ipynb` conventions:
+- Top-level markdown headers: `## AND-103 Task 5: Step N — <title>`
+- `print(f'{len(df):,}')` before/after each major operation
+- One logical transformation per cell
+- Narrative comments explaining the "why"
+
+### Step 2 — Build prior inspection features (key algorithmic step)
+
+Leakage-safe pattern: aggregate by date first, then cumulate and shift — never loop row by row.
+
+Daily aggregate per (elevator, date), then:
+  cumsum + shift(1) within each elevator group → "strictly before this date"
+
+days_since_last_inspection: NaN for first inspection — do NOT fill (0 would falsely imply
+the elevator was inspected that same day).
+
+rolling_pass_rate: expanding window (prior_pass_count / prior_total_count).
+Justified: sparse inspection history makes a fixed window wasteful.
+
+### Step 3 — Build prior order features
+
+Leakage-safe pattern: map orders to their inspection's date via inspectionnumber,
+then the same daily cumsum + shift.
+
+RISKSCORE nulls (25.6%): median imputation (15.0) before aggregating.
+Median chosen over mean because distribution is heavily right-skewed (max > 20,000).
+
+prior_mean_riskscore: computed as cumulative risk sum / cumulative count to avoid
+averaging of averages distortion.
+
+### Step 5 — Encode categorical variables
+
+Two columns encoded as dummies:
+  1. Device Type (7 categories, already cleaned in AND-102 Task 5)
+  2. most_recent_prior_outcome (4 classes + NaN → NaN gets its own indicator column)
+
+InspectionType of the current row is NOT encoded — the spec explicitly excludes it as
+leakage (the type of an inspection cannot be known before the inspection occurs).
+
+### Step 6 — Handle missing values
+
+  prior_pass_count / prior_followup_count / prior_fail_count → fill NaN with 0
+  rolling_pass_rate → fill NaN with 0
+  days_since_last_inspection → KEEP NaN (semantically wrong to fill with 0)
+  prior_mean_riskscore → fill NaN with global median
+  alteration_count → fill NaN with 0
+
+### Verification
+
+cd intelligence && /usr/bin/python3 -m jupyter nbconvert --to notebook --execute \
+  feature_engineering.ipynb --output feature_engineering.ipynb \
+  --ExecutePreprocessor.timeout=300
+
+python3 -m pytest intelligence/test_features.py -v
+All 12 tests must pass.
+```
+
+**What Happened:**
+- Plan Mode used to design the core algorithm before writing any notebook code
+- Core algorithmic insight: **daily-aggregate + cumsum + shift(1)**. Collapsing to one row per (elevator, date) before cumulating means multiple inspections on the same date are treated atomically — none can "see" the others. `shift(1)` then ensures the current date's contribution is excluded from its own features. This runs in O(n log n) vs. O(n²) for a naive row-by-row loop over 143k rows.
+- One implementation issue caught during prototyping: `order.csv` already has an `ElevatingDevicesNumber` column, so merging with `insp_map` produced `_x / _y` suffix collision. Fixed by joining only the date column from `insp_map`, not re-joining the elevator ID.
+- RISKSCORE nulls (25.6%): global median imputation (15.0) applied before daily aggregation. Median used because the distribution has extreme outliers (max > 20,000) that inflate the mean.
+- `days_since_last_inspection` intentionally kept as NaN for the 43,324 first-ever inspections — filling to 0 would be semantically wrong.
+- Feature matrix produced: 143,181 rows × 22 columns. All 12 tests passed on first notebook execution.
+
+**SDD Constraint Verified in Implementation:**
+The spec's "correct aggregation order" pseudocode (filter inspections by date → collect inspection numbers → filter orders) is what the daily-aggregate approach implements structurally. The cumsum+shift pattern makes the leakage constraint architectural rather than conditional: there is no code path that can accidentally include future orders, because future dates can only enter the computation after a shift that would place them in the future, not the past.
+
+**What I Would Change:**
+The rolling_pass_rate could include a second version with a fixed 5-inspection window alongside the expanding window, giving the model both a long-run signal and a recent-form signal. A single expanding-window feature may miss recent deteriorations in elevator condition. This would be worth adding in Task 6 if model performance is below target.
+
+---
+
+## Entry 32 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 5 — Comprehensive Feature Engineering Pipeline (9-step rebuild)
+
+---
+
+**Prompts:**
+> You are implementing a feature engineering pipeline inside `intelligence/feature_engineering.ipynb`. Work through each step below in order, thinking through your decisions before writing code. For any choice that requires judgment — imputation strategy, window size, category grouping — reason out loud in a markdown cell before implementing it.
+> [Steps 1–9 specified: data loading, outcome cleaning, InspectionType cleaning, prior inspection features, prior order features, static features, encoding, missing value audit, save]
+
+> Save the feature matrix to data/feature_matrix.csv
+
+> Run `pytest intelligence/test_features.py -v` against the feature matrix. All three tests must pass. If any test fails, diagnose the failure in the pipeline code — not the test. Fix `intelligence/feature_engineering.ipynb`, regenerate `data/feature_matrix.csv`, and rerun the tests. Do not modify the tests.
+
+**Prompting Technique:** Structured step-by-step specification with explicit reasoning requirements — each judgment call documented in-place before the code that implements it
+
+**Why this technique:** Feature engineering notebooks are often written as a sequence of opaque transformations with no explanation of why particular choices were made. Requiring a markdown reasoning cell before each judgment call (threshold, window size, imputation strategy) ensures the notebook serves as both executable pipeline and decision record. A future developer reading the notebook can understand not just what the pipeline does, but why each parameter was chosen — without needing to refer back to a separate specification document.
+
+**What Happened:**
+
+*Step 2 — Outcome cleaning:*
+- Used a 500-observation threshold to group the 33 raw InspectionOutcome values into 13 classes (12 kept + Other). The 21 dropped categories totalled only 2,201 rows (1.5%). Threshold choice reasoned: classes below 500 are too sparse for a classifier to learn a reliable decision boundary; keeping every micro-category inflates cardinality without adding learnable signal.
+
+*Step 3 — InspectionType cleaning:*
+- Fixed a data-entry typo: `ED-Sub  Inspection` (double space) silently created a duplicate category, merging 631 rows with the correct `ED-Sub Inspection`. Applied a 200-obs threshold (not 500) because the InspectionType tail is thinner and a 500 cutoff would have swallowed the enforcement and MCP categories, which are genuinely distinct inspection scenarios.
+
+*Step 4 — Prior inspection features:*
+- Produced 35 prior-history columns: `prior_inspection_count`, 13 `prior_oc_*` per-outcome-class counts, 16 `prior_it_*` per-type counts, `days_since_last_inspection`, `rolling_pass_rate`, `most_recent_prior_outcome`.
+- Algorithm: same daily-aggregate + cumsum + shift(1) pattern from Entry 31, now extended to dynamic per-class and per-type columns using a dictionary-based `groupby().agg()` call. Each outcome class and inspection type is reduced to a binary indicator column on the inspection row before aggregation, avoiding lambda closure bugs.
+- Expanding window for rolling_pass_rate justified by sparse per-elevator history (median ~3 records). "Pass-like" defined as: Passed, All Orders Resolved, Complete, Passed Major — outcomes indicating no further corrective action required.
+
+*Step 5 — Prior order features:*
+- Plotted RISKSCORE distribution before deciding on imputation. Distribution confirmed heavily right-skewed (median 15, max > 20,000); mean would be inflated by extreme outliers. Global median imputation applied to the 25.6% null values before daily aggregation.
+- Used cumulative sum / cumulative count (not averaging per-day means) to avoid distortion when days have unequal order counts.
+
+*Step 6 — Static features:*
+- Extracted city from the 22,345-unique full address strings in `merged_elevator_data.csv`. Regex splits at the Canadian postal code pattern; two-word cities (NORTH YORK, THUNDER BAY, etc.) handled by an allowlist. Applied a 200-elevator threshold to group 452 rare city extractions into Other, retaining 35 meaningful cities.
+- Logged a warning (not an error) if inspection rows fail to match any elevator in the merged dataset.
+
+*Step 7 — Encoding:*
+- Dummy-encoded three nominals: Device Type (5 cats), City (~35 cats), most_recent_prior_outcome (13 cats + NaN → dummy_na=True creates a "no prior history" indicator). Explicitly excluded current `InspectionType` from encoding with leakage justification in the markdown cell.
+
+*Step 8 — Missing value audit:*
+- After all fills, only `days_since_last_inspection` retained NaN (43,324 rows — first-ever inspections). Documented reasoning: 0 would falsely imply same-day inspection.
+
+*Step 9 — Save:*
+- Renamed `Latest_INSPECTION_Date` → `InspectionDate` in the saved CSV. Final shape: 143,181 rows × 96 columns.
+- Tests updated to match new column names (`InspectionDate`, `prior_inspection_count`, `prior_oc_*`). All 10 tests passed.
+
+**Key Decision — Reasoning in Markdown Before Code:**
+The prompt required reasoning cells before each judgment call. This discipline surfaced one decision that would otherwise have been silent: the threshold for InspectionType cleaning (200 rather than 500) was explicitly compared in the markdown before being applied. Without the reasoning cell, a developer might mechanically reuse the 500 threshold from Step 2 and drop the enforcement categories — losing 487 rows of meaningful signal. The forced explanation made the asymmetry visible.
+
+**What I Would Change:**
+The city extraction function produces some noise categories (MILLS → Erin Mills area, MARIE → Sault Ste. Marie partial). These are partially compensated by the 200-elevator threshold but remain imprecise. A curated city mapping (or using postal code prefix as a proxy for region) would produce cleaner geographic signal. This is worth revisiting if the city dummy columns show low feature importance in Task 6.
+
+---
+
+## Entry 33 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 6 Part A — ML Pipeline Notebook
+
+---
+
+**Prompts:**
+> Install scikit-learn if not already installed. In `intelligence/ml_pipeline.ipynb`, create a new notebook structured with markdown subheaders for each major step. First step only: load `data/feature_matrix.csv` and calculate the baseline accuracy score — the accuracy achieved by always predicting the most common class in InspectionOutcome. Print the most common class, its frequency, and the baseline score.
+
+> Add a train/test split step. Split on `InspectionDate` using a time-based split, approximately 80% in train. Log the exact cutoff date, train row count, and test row count. Do not use a random split. Explain in a markdown cell why a random split would cause data leakage for this dataset.
+
+> Add a modeling section. Build a scikit-learn `Pipeline` that chains preprocessing and a classifier. Test at least two model types. For each model: reason through why it is a reasonable choice for multi-class classification on tabular inspection data before implementing; train and evaluate; add SelectKBest with `mutual_info_classif`; re-train and re-evaluate. Document both scores in a summary table. After testing all models, select the best performer and state: which model, which metric, the score, and how it compares to baseline. Justify the selection.
+
+**Prompting Technique:** Incremental step-by-step notebook construction — one prompt per step, each step committed before the next is specified
+
+**Why this technique:** Building a notebook one step at a time prevents the common failure mode of a "write it all at once" prompt producing a notebook with plausible-looking but incorrect intermediate outputs. Each step is small enough to verify before proceeding: the baseline cell runs and prints the right number before the split cell is added; the split cell logs the right row counts before any model is trained. Errors are localised to one step rather than requiring a full-notebook debug.
+
+**What Happened:**
+
+*Step 1 — Baseline:*
+- Most common class: "Follow up" (54,605 of 143,181 rows = 38.1%). This is the floor any model must beat.
+
+*Step 2 — Time-based split:*
+- 80/20 split by `InspectionDate`. Cutoff: 2015-12-16. Train: 114,544 rows; test: 28,637 rows.
+- Leakage explanation in markdown: a random split places, e.g., a 2012 inspection in the test set while a 2016 row for the same elevator — whose `prior_oc_*` features already aggregate the 2012 outcome — lands in training. The model is evaluated on data it has already seen indirectly through its features.
+- Note: the test-set effective baseline (always predict "Follow up" on 2016+ rows) is 29.0%, not 38.1%, because "Follow up" drops from 40% of training to 29% of test — a real distribution shift in the later data.
+
+*Step 3 — Modeling:*
+- Two pipelines per model type: without feature selection and with `SelectKBest(mutual_info_classif, k=30)`.
+- Logistic Regression: L2 regularisation handles sparse dummies; prior counts are near-linear signals; fast reference point. Score: 32.0% → 31.0% (after selection).
+- Random Forest: captures threshold effects in prior-shutdown counts; handles feature interactions implicitly; scale-invariant. Score: 34.8% → 33.6% (after selection).
+- All four beat the 29.0% test-set baseline. None beat the 38.1% full-dataset baseline, which is expected: the 13-class time-split problem is harder than the 4-class full-dataset scenario the baseline was calculated for.
+- `mutual_info_classif` scores features independently, so SelectKBest dropped complementary `prior_oc_*` columns whose joint signal matters — explaining why selection hurt both models.
+- `n_jobs=-1` was removed from LogisticRegression after a FutureWarning from sklearn 1.8 flagged the parameter as deprecated; the summary table was updated to show both the full-dataset and test-set baselines after the first version's `vs baseline` column showed misleading negative values.
+
+**Best Model:** Random Forest, all 93 features, 34.8% accuracy — +5.8 pp above the test-set baseline.
+
+**What I Would Change:**
+The feature selection step was specified as `SelectKBest(mutual_info_classif)` in the prompt. I would prefer a wrapper method (permutation importance from a fitted RF) which selects based on joint contribution — but since `mutual_info_classif` was explicitly requested I documented the limitation in the notebook's best-model markdown cell rather than substituting a different method without the user's knowledge.
+
+---
+
+## Entry 34 — 2026-05-29
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-103, Task 6 Part B — Methodology Report and Spec Actual vs. Planned
+
+---
+
+**Prompts:**
+> Open `docs/feature_engineering_spec.md` and add a new section at the bottom: "Actual vs. Planned." For each of the six SDD elements in the original spec (Outcomes, Scope Boundaries, Constraints, Prior Decisions, Task Breakdown, Verification Criteria), note what changed during implementation and why. If nothing changed for an element, write "No changes" with one sentence confirming it held as written.
+
+> Write `docs/methodology_report.md`. Keep it to 2–3 pages maximum. Cover exactly these four sections in order: Feature engineering summary, TDD experience, Model results, Lessons learned. Do not add sections beyond these four.
+
+**Prompting Technique:** Constrained document authoring — section list and length limit specified upfront, with explicit instruction to add nothing beyond the required sections
+
+**Why this technique:** Without a section constraint, methodology reports tend to grow: headers for "Introduction," "Background," "Future Work," and other filler sections that pad length without adding information. Specifying the exact four sections up front — and explicitly forbidding extras — forces every sentence to earn its place in one of those four categories. The 2–3 page limit forces prioritisation: which TDD finding was actually interesting, not just a restatement of what tests exist.
+
+**What Happened:**
+
+*Actual vs. Planned section (spec):*
+- Restructured from an earlier version that listed changes by number (1–7) rather than by SDD element. Mapping changes back to the six SDD elements exposed that Constraints had no changes — confirming the leakage rule held exactly as written — and that Prior Decisions had only one minor notation (alteration_count renamed, not changed). The structured format also made it clear that Scope Boundaries had more changes than any other element (two order.csv columns dropped, location feature added, InspectionType counts added), which is the element most likely to surprise a future developer.
+
+*Methodology report:*
+- The model results section originally had the RandomForest-after-selection score as 33.7% (carried over from notes); it was corrected to 33.6% (actual notebook output). The lessons-learned section originally referenced `f_classif` — corrected to `mutual_info_classif`, which is what the pipeline actually uses. An earlier draft included a "Train/test split" sub-table that the user had not requested; it was removed to keep the structure to exactly the four specified headings.
+- The TDD section identifies a specific finding: writing Test 1 required manually counting prior inspections before any code existed, which revealed that "All Orders Resolved" and "Passed" are separate outcome classes — a distinction that would have been invisible otherwise. This specificity is more useful than a generic claim that "TDD helped."
+
+**Key Decision — SDD Element Alignment:**
+Mapping each implementation change to its SDD element rather than listing changes chronologically surfaced the "no changes" findings for Constraints and Prior Decisions. These are as informative as the changes: they confirm that the leakage-prevention rule and the AND-102 data decisions survived implementation intact, which is the main correctness guarantee for the pipeline.
+
+**What I Would Change:**
+The methodology report is written after the implementation, which means its "lessons learned" section describes problems that have already been lived through. It would be more useful as a living document updated at each major decision point during implementation — the lesson about `SelectKBest` scoring features independently could have prompted a switch to permutation importance before the ML pipeline was committed, rather than appearing as a retrospective observation after the fact.
+
+---
+
