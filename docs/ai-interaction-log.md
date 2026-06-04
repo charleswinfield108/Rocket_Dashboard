@@ -1326,6 +1326,66 @@ The phased prompting worked well but the approval gates could be tighter. In Pha
 
 ---
 
+## Entry 38 — 2026-06-04
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 5 — Full-Stack Integration: API validation tooling and Python frontend proxy
+
+---
+
+**Prompts:**
+> Create a Claude Code subagent at `.claude/agents/api-validator.md` with three parts: ROLE DESCRIPTION, WORKFLOW (numbered steps, think-first-verdict-last), OUTPUT FORMAT (fixed report template). Do NOT touch the frontend yet.
+
+> Create a user-invocable skill at `.claude/skills/validate-api/SKILL.md`. Takes a single argument (endpoint path), delegates to api-validator, surfaces its report. Do not duplicate validation logic.
+
+> [/validate-api on each of the four endpoints — run serially, fix failures before moving on]
+
+> Think step by step before writing any code. STEP 1 — reason out the integration strategy (server-side proxy vs direct client-side calls). STEP 2 — implement. STEP 3 — handle Go API unavailability. STEP 4 — append AI Interaction Log entry.
+
+**Prompting Technique:** Multi-phase workflow with an explicit reasoning gate before implementation — STEP 1 forces a written comparison of the two strategies before any code is touched, so the implementation follows from reasoned justification rather than default choice.
+
+**Why this technique:** The integration strategy decision (server-side proxy vs. direct client-side calls) has architectural consequences that are hard to reverse once wired. Writing out the tradeoffs in STEP 1 made it explicit that Option B (direct browser calls) would break the HTMX architecture entirely — HTMX expects HTML fragments, not JSON, and the Go API is a pure JSON service. That reasoning would have been implicit if skipped; making it a named step forced it to be evaluated before a line of code was written.
+
+**Integration Strategy Decision — Server-side proxy:**
+
+Two options were evaluated:
+
+*Option A — Server-side proxy:* Flask receives the HTMX `GET /elevator/{id}` request, calls `http://localhost:8081/api/elevators/{id}` internally using the `requests` library, shapes the JSON into a Jinja2 HTML fragment, and returns HTML to the browser.
+
+*Option B — Direct client-side calls:* The browser / HTMX calls `http://localhost:8081` directly.
+
+**Option B was ruled out immediately:** HTMX is designed to swap server-rendered HTML fragments into the DOM. A direct browser call to the Go API returns JSON, which HTMX would inject as raw text — the detail panel would render garbled output. Making the Go API return HTML would violate its spec (pure JSON service, per `docs/api_spec.md`). Additionally, Option B requires CORS headers on the Go API (not implemented, not in spec), and places error handling in JavaScript event hooks rather than Python, where `requests.exceptions.RequestException` is one `except` clause.
+
+**Option A chosen.** The Flask server acts as a transparent proxy: it fetches JSON from the Go API, shapes it into Jinja2 HTML, and returns the fragment. This preserves the HTMX architecture (browser always receives HTML), requires no CORS changes, and centralises all error handling in Python.
+
+**What Happened:**
+
+*Validation tooling:*
+- `api-validator` subagent: three-part structure (role, 13-dimension workflow, fixed report template). Designed to work for any of the four endpoints without hardcoding endpoint-specific knowledge.
+- `validate-api` skill: user-invocable (`user-invocable: true`), delegates entirely to the subagent, surfaces its report verbatim.
+- Four validation runs:
+  - `GET /api/elevators` — initially DOES NOT CONFORM (Dimension 16: error message missing `got 9999`). Fixed with a two-branch limit check; re-ran → CONFORMS.
+  - `GET /api/elevators/{id}` — CONFORMS on first run.
+  - `GET /api/elevators/{id}/risk` — CONFORMS (503 is spec-correct pre-Task-6 behaviour).
+  - `GET /api/elevators/{id}/inspections` — initially DOES NOT CONFORM (Dimension 8: `risk_score` serialised as `22` not `22.0`). Fixed with a custom `jsonFloat` type + `MarshalJSON` method; re-ran → CONFORMS.
+
+*Frontend integration:*
+- `import requests as http_client` added; `GO_API = "http://localhost:8081"` constant added.
+- `elevator_detail` handler replaced: calls `GET /api/elevators/{id}` for basic info and `GET /api/elevators/{id}/inspections` for inspection history.
+- `incident.json` and `altered.json` remain as local reads — the Go API does not own incident or alteration detail records.
+- Task 6 hook left as commented-out block for `GET /api/elevators/{id}/risk`.
+- Error states: `RequestException` → `_unavailable_fragment()` with HTTP 503; 404 → `_not_found_fragment()` with HTTP 404; unexpected status → `_unavailable_fragment()` with HTTP 502.
+- Port conflict confirmed absent: Flask on 5000, Go API on 8081.
+
+**Key Decision — What the API owns vs. what stays local:**
+The Go API owns elevator static detail (from `merged_elevator_data.csv`) and inspection history (from `inspection.csv` + `order.csv`). Incident and alteration *detail rows* (from `incident.json` and `altered.json`) are not exposed by any Go API endpoint. The integration replaces CSV reads for the data the API owns; the remaining local reads are retained because the alternative (reading those files directly in Python) is the only source available.
+
+**What I Would Change:**
+The `api-validator` subagent's Step 2 protocol hardcodes `elevator ID 10` as the happy-path test ID. A more robust subagent would first issue a `GET /api/elevators?limit=1` to discover a valid ID dynamically, so it doesn't depend on elevator 10 being present in any future dataset. This is a minor gap — elevator 10 exists in the current data — but it would be the first thing to change before running this validator against a different environment.
+
+---
+
 ## Entry 36 — 2026-06-03
 
 **Tool:** Claude (claude-sonnet-4-6)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // ── error type ────────────────────────────────────────────────────────────────
@@ -73,14 +74,26 @@ type detailResponse struct {
 	LatestInspectionOutcome *string `json:"latest_inspection_outcome"`
 }
 
+// jsonFloat marshals to a JSON number that always contains a decimal point
+// (e.g. 22.0 rather than 22), keeping risk_score typed as float on the wire.
+type jsonFloat float64
+
+func (f jsonFloat) MarshalJSON() ([]byte, error) {
+	s := strconv.FormatFloat(float64(f), 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return []byte(s), nil
+}
+
 type orderItem struct {
-	RiskScore      float64 `json:"risk_score"`
-	Directive      *string `json:"directive"`
-	Description    *string `json:"description"`
-	Status         string  `json:"status"`
-	DateIssued     string  `json:"date_issued"`
-	DaysToComply   *int    `json:"days_to_comply"`
-	ComplianceDate *string `json:"compliance_date"`
+	RiskScore      jsonFloat `json:"risk_score"`
+	Directive      *string   `json:"directive"`
+	Description    *string   `json:"description"`
+	Status         string    `json:"status"`
+	DateIssued     string    `json:"date_issued"`
+	DaysToComply   *int      `json:"days_to_comply"`
+	ComplianceDate *string   `json:"compliance_date"`
 }
 
 type inspectionItem struct {
@@ -165,9 +178,14 @@ func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit, err := parseQueryInt(q.Get("limit"), 100)
-	if err != nil || limit < 1 || limit > 500 {
+	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "INVALID_PARAMETER",
 			"limit must be between 1 and 500")
+		return
+	}
+	if limit < 1 || limit > 500 {
+		s.writeError(w, http.StatusBadRequest, "INVALID_PARAMETER",
+			"limit must be between 1 and 500, got "+strconv.Itoa(limit))
 		return
 	}
 
@@ -269,7 +287,7 @@ func (s *server) handleGetInspections(w http.ResponseWriter, r *http.Request) {
 		orders := make([]orderItem, 0, len(rawOrders)) // non-nil so it marshals to []
 		for _, ord := range rawOrders {
 			orders = append(orders, orderItem{
-				RiskScore:      ord.RiskScore,
+				RiskScore:      jsonFloat(ord.RiskScore),
 				Directive:      ord.Directive,
 				Description:    ord.Description,
 				Status:         ord.Status,
