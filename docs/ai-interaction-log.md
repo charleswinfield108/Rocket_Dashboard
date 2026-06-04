@@ -1326,3 +1326,48 @@ The phased prompting worked well but the approval gates could be tighter. In Pha
 
 ---
 
+## Entry 36 — 2026-06-03
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 2 — REST API Specification (`docs/api_spec.md`)
+
+---
+
+**Prompts:**
+> Before writing anything, inventory the data this API will serve. List every CSV under data/ (and anywhere else CSVs live in this repo). For each file, report: filename and row count, full column headers, inferred type per column (string / int / float / date / bool), 2–3 real sample rows. Also flag any columns that act as IDs or foreign keys linking elevators to their inspections. Do NOT write the spec yet.
+
+> Create a new file docs/api_spec.md: a REST API specification for the Go backend service. This is a pure JSON service — it does not serve HTML. Base every field name and type on the CSV data you just inspected. Do not invent fields. [Full prompt with SDD structure, four endpoints, error response requirements, data sources mapping, and pre-publish checklist.]
+
+**Prompting Technique:** Explicit gate between data inspection and document authoring — the first prompt forbids writing the spec, forcing a grounded inventory before any field names are committed to
+
+**Why this technique:** API specs written without inspecting real data invent plausible-sounding field names that don't match the actual source columns. The gate enforces a two-step process: inspect first, specify second. The inventory revealed several things that would have been wrong in a naive spec — three different date formats across the CSVs requiring normalisation, the `under review` "Y"/"N" string needing boolean coercion, three columns containing only `"data redacted"` that should be omitted from all responses, and the fact that `Device Class` is always `"Elevators"` in the dataset (present in the spec but noted as having no filtering value). Without the inventory step, these would have been discovered during implementation rather than during spec review.
+
+**What Happened:**
+
+*Data inventory:*
+- Six CSVs profiled: `data/feature_matrix.csv` (143,181 rows, 96 cols), `data/inspection.csv` (143,181 rows, 9 cols), `data/license.csv` (45,383 rows, 11 cols), `data/merged_elevator_data.csv` (43,251 rows, 25 cols), `data/order.csv` (162,172 rows, 15 cols), `platform/elevator_fleet.csv` (43,297 rows, 4 cols).
+- `ElevatingDevicesNumber` (int64) confirmed as the shared join key across all five `data/` files. `platform/elevator_fleet.csv` uses the alias `elevator_id` for the same values.
+- `InspectionNumber` / `inspectionnumber` confirmed as the join key between `inspection.csv` and `order.csv`.
+- Date formats identified as inconsistent: `28-Apr-17` (license.csv), `1/10/2011` (inspection.csv), `2015-03-27` (merged/fleet), `3/5/2012 14:08` with timestamp (order.csv). Normalisation to ISO 8601 mandated in Constraints.
+- `BILLINGACCOUNT`, `LICENSEHOLDERACCOUNTNUMBER`, `Owner Account Number` contain `"data redacted"` — confirmed excluded from all response shapes.
+- `RISKSCORE` range confirmed as 0–20,316 (not 0–1); no normalisation in the API.
+- `outcome_class` in `feature_matrix.csv` has exactly 13 distinct values — these become the keys of `class_probabilities` in the `/risk` response.
+
+*Spec (`docs/api_spec.md`):*
+- Structured under all six SDD elements.
+- **Scope Boundaries decision — pagination:** included for `GET /api/elevators` (43,251 rows too large for a single mobile response); excluded for `/inspections` and `/risk` (per-elevator counts are bounded). Decision stated explicitly.
+- **Scope Boundaries decision — compliance orders:** not a top-level resource. Order data surfaces as nested arrays inside `/inspections` and as summary fields (`open_orders_count`, `mean_risk_score`) inside `/risk`.
+- **`/risk` 503 response:** distinguished from 404 so clients can tell "elevator not found" from "predictions pipeline hasn't run yet." Applies until Task 6 generates `predictions.csv`.
+- **`predictions.csv` forward schema defined:** 18 columns specified (join key, predicted class, confidence, 13 class-probability columns, model version, generated-at date) so Task 6 knows exactly what shape to produce.
+- Example responses built from real rows: elevator IDs 10, 1009, 10145 from the merged CSV; inspection numbers 3747366 and 3763443 with risk score 22.0 and status RESOLVED from order.csv.
+- Pre-publish checklist: all eight items pass.
+
+**Key Decision — 503 for missing predictions vs. 404:**
+Both 404 and 503 apply to the `/risk` endpoint, but for different conditions: 404 means the elevator ID is not in `merged_elevator_data.csv` (the elevator does not exist); 503 means the elevator exists but `predictions.csv` is not loaded or has no row for that ID. Conflating these into a single 404 would make it impossible for a client to distinguish "bad ID" from "predictions not ready." The 503 with `PREDICTIONS_UNAVAILABLE` gives the client actionable information and clearly signals a pipeline dependency rather than a client error.
+
+**What I Would Change:**
+The inspection example response for elevator 10 uses `service_request_number` values noted as "representative" — the inventory profiled only the first three rows of `inspection.csv` (elevator IDs 9948, 28588, 76833), so the exact `originatingservicerequestnumber` for elevator 10 was not in the sample. A targeted filter (`inspection.csv` rows where `ElevatingDevicesNumber == 10`) during the inventory step would have given exact values for the example response. The spec is correct structurally but the example would be tighter with real values at the row level for that elevator.
+
+---
+
