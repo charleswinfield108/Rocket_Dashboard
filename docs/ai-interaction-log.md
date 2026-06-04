@@ -1279,3 +1279,50 @@ The methodology report is written after the implementation, which means its "les
 
 ---
 
+## Entry 35 — 2026-05-30
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 1 — CLAUDE.md Audit and Platform Conventions Skill
+
+---
+
+**Prompts:**
+> I'm doing an audit of my CLAUDE.md and migrating platform-specific rules into a skill. Work through this in phases and PAUSE for my approval after Phase 1 before editing any files.
+
+> PHASE 1 — READ & REASON: Read CLAUDE.md in full. Extract every distinct rule — treat each as its own line item. For each rule, categorize into exactly one of three buckets (ALWAYS RELEVANT / MUST ALWAYS EXECUTE / SCOPED TO PLATFORM WORK) and justify in one sentence. Present as a table and stop. Flag anything ambiguous.
+
+> [Approved Phase 1 results]
+
+> PHASE 2 — AUDIT DOC: Create docs/claude_md_audit.md starting with a markdown header naming the task. List every rule with category and justification. Note this is a first-pass that will be refined as hooks are implemented.
+
+> PHASE 3 — CREATE THE SKILL: Create .claude/skills/platform-conventions/SKILL.md with the SCOPED TO PLATFORM WORK rules. Frontmatter must reference platform/, Python, HTMX. Do NOT set user-invocable: true. Under 500 lines.
+
+> PHASE 4 — TRIM CLAUDE.md: Remove every rule migrated into the skill. Leave ALWAYS RELEVANT and MUST ALWAYS EXECUTE rules in place. CLAUDE.md must end up shorter.
+
+> PHASE 5 — VERIFY: Run through the checklist and report pass/fail for each criterion.
+
+> [Confirmed checklist — all pass] Stage and commit the three deliverables in a single commit.
+
+**Prompting Technique:** Phased workflow with explicit approval gates — each phase is approved before the next begins and no files are edited until the analysis is confirmed
+
+**Why this technique:** This is the first time a CLAUDE.md rule has been migrated to a different mechanism. Making the analysis visible before any file is touched prevents committing a categorisation that seems reasonable in isolation but misses something on closer review. The approval gate after Phase 1 specifically caught a useful clarification: rules 1 and 6 (both describing `python3 platform/server.py`) overlapped and needed to be merged in the skill rather than duplicated.
+
+**Extension Mechanism Decision — Skill vs. CLAUDE.md:**
+Rules 3, 6, and 7 (spec-first dashboard workflow, Flask server startup, HTMX fragment pattern) moved from CLAUDE.md to the platform-conventions skill. The reason is scope: these rules are only relevant when editing `platform/` files. A developer working purely in the intelligence layer or on documentation does not need to load and process these conventions on every interaction. Keeping them in CLAUDE.md loads them universally — which adds noise without value outside the platform context. A skill that auto-loads when `platform/` files are open delivers the same guidance with better targeting.
+
+Rule 5 (never include `Co-Authored-By: Claude` in commit messages) was flagged as a **hook candidate** rather than a skill. The distinction: a skill is advisory text that can be ignored; a PreToolUse hook on git commands executes deterministically regardless of whether the instructions were read. For a rule like commit message format — where a single overlooked instance in hundreds of commits is a real risk — deterministic enforcement is the right mechanism. The rule stays in CLAUDE.md for now and will move to a hook in Task 4.
+
+**What Happened:**
+- 7 rules extracted from CLAUDE.md (including one embedded in the Directories section: `data/` — do not modify)
+- Categorisation: 2 ALWAYS RELEVANT, 1 MUST ALWAYS EXECUTE (hook candidate), 4 SCOPED TO PLATFORM WORK
+- Rules 1 and 6 merged into one entry in the skill (both referenced `python3 platform/server.py`)
+- CLAUDE.md trimmed from 31 → 28 lines; 3 platform-scoped rules removed, single pointer line added
+- Skill created at 69 lines; includes forward-looking Go API conventions and generated data file rule for later tasks
+- All 7 checklist items passed before commit
+
+**What I Would Change:**
+The phased prompting worked well but the approval gates could be tighter. In Phase 4, the first version of the trimmed CLAUDE.md ended up the same line count as the original (31 lines) because a new "Platform Conventions" pointer section offset the removed rules. A pre-commit line-count check built into the phase instructions ("confirm the output is shorter before reporting back") would have caught this without needing a second pass.
+
+---
+

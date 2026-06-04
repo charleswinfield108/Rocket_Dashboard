@@ -8,7 +8,7 @@ Rocket Elevators Operations Dashboard — a server-driven dashboard and data ana
 
 ## Tech Stack
 
-HTML, Tailwind CSS (CDN), HTMX, Python 3, Flask, pandas, matplotlib, Jupyter notebooks. The dashboard is served by a Flask server — open via `python3 platform/server.py`, not by opening the HTML file directly.
+HTML, Tailwind CSS (CDN), HTMX, Python 3, Flask, pandas, matplotlib, Jupyter notebooks.
 
 ## Directories
 
@@ -23,8 +23,6 @@ All six datasets share `ElevatingDevicesNumber` / `Elevating devices number` as 
 
 ## Conventions
 
-- **Dashboard changes go through the spec first.** Edit `docs/dashboard_spec.md`, then regenerate `platform/index.html`. Do not edit the HTML directly.
 - **Run notebooks with:** `cd intelligence && /usr/bin/python3 -m jupyter nbconvert --to notebook --execute <notebook>.ipynb --output <notebook>.ipynb --ExecutePreprocessor.timeout=120` — always `cd` into `intelligence/` first and pass a filename-only `--output`. Passing a path like `intelligence/etl_pipeline.ipynb` as `--output` causes nbconvert to double the directory prefix.
 - Never include `Co-Authored-By: Claude` in commit messages.
-- **Flask server** is at `platform/server.py`. Start with `python3 platform/server.py`. The dashboard is served at `http://localhost:5000`.
-- **HTMX endpoints return HTML fragments, not JSON.** The `/elevators` endpoint returns a `<tbody>` fragment for HTMX to swap into the page.
+- **Platform conventions** (Flask server startup, spec-first workflow, HTMX patterns): see `.claude/skills/platform-conventions/SKILL.md`.
