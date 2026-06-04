@@ -74,13 +74,13 @@ type detailResponse struct {
 }
 
 type orderItem struct {
-	RiskScore      float64  `json:"risk_score"`
-	Directive      *string  `json:"directive"`
-	Description    *string  `json:"description"`
-	Status         string   `json:"status"`
-	DateIssued     string   `json:"date_issued"`
-	DaysToComply   *int     `json:"days_to_comply"`
-	ComplianceDate *string  `json:"compliance_date"`
+	RiskScore      float64 `json:"risk_score"`
+	Directive      *string `json:"directive"`
+	Description    *string `json:"description"`
+	Status         string  `json:"status"`
+	DateIssued     string  `json:"date_issued"`
+	DaysToComply   *int    `json:"days_to_comply"`
+	ComplianceDate *string `json:"compliance_date"`
 }
 
 type inspectionItem struct {

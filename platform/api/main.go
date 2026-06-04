@@ -48,12 +48,12 @@ type server struct {
 
 	// Loaded at startup from CSV files. All maps are keyed by ElevatingDevicesNumber
 	// (exposed as "id" in JSON), except ordersByInsp which is keyed by InspectionNumber.
-	elevators     map[int]*elevatorRow
-	elevatorIDs   []int // stable insertion order for deterministic pagination
-	inspByElev    map[int][]*inspectionRow
-	ordersByInsp  map[int][]*orderRow
-	ordersByElev  map[int][]*orderRow
-	predictions   map[int]*predictionRow
+	elevators         map[int]*elevatorRow
+	elevatorIDs       []int // stable insertion order for deterministic pagination
+	inspByElev        map[int][]*inspectionRow
+	ordersByInsp      map[int][]*orderRow
+	ordersByElev      map[int][]*orderRow
+	predictions       map[int]*predictionRow
 	predictionsLoaded bool
 }
 
