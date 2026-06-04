@@ -1378,6 +1378,13 @@ Two options were evaluated:
 - Error states: `RequestException` → `_unavailable_fragment()` with HTTP 503; 404 → `_not_found_fragment()` with HTTP 404; unexpected status → `_unavailable_fragment()` with HTTP 502.
 - Port conflict confirmed absent: Flask on 5000, Go API on 8081.
 
+*End-to-end verification (Prompt 5):*
+- Both servers started simultaneously: Go API on `:8081`, Flask on `:5000` — HTTP 200 on both, no port conflict.
+- Detail panel for elevator 10 returns HTTP 200 with all five expected sections (Elevator Detail, Inspections, Incidents, Alterations header).
+- Side-by-side comparison for elevator 10: `id`, `location`, `device_type`, `license_status`, `license_expiry`, and `alteration_count` in the Flask HTML fragment exactly match the raw Go API JSON response field-for-field.
+- Go API killed mid-session: Flask `/elevator/10` returned HTTP 503 with the amber "Service Unavailable" fragment — no crash, no stack trace, no raw exception bubbled to the browser.
+- Committed in two logical groups: `deb9d14` (validation tooling) and `a38e221` (frontend integration + conformance fixes + log entry).
+
 **Key Decision — What the API owns vs. what stays local:**
 The Go API owns elevator static detail (from `merged_elevator_data.csv`) and inspection history (from `inspection.csv` + `order.csv`). Incident and alteration *detail rows* (from `incident.json` and `altered.json`) are not exposed by any Go API endpoint. The integration replaces CSV reads for the data the API owns; the remaining local reads are retained because the alternative (reading those files directly in Python) is the only source available.
 
