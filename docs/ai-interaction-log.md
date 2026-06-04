@@ -1371,3 +1371,59 @@ The inspection example response for elevator 10 uses `service_request_number` va
 
 ---
 
+## Entry 37 — 2026-06-03
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 3 — Go API Server Implementation
+
+---
+
+**Prompts:**
+> STEP 1 — Read the contract. Open docs/api_spec.md and treat it as the source of truth. Then read the headers of the CSVs it references. For yourself, list the exact field names/types each endpoint must return so the JSON matches the spec precisely.
+
+> STEP 2 — Scaffold. Create platform/api/ and run go mod init. Use the Go standard library net/http with Go 1.22+ ServeMux routing. The server must: listen on a configurable port (default 8081), resolve the data directory configurably (env DATA_DIR), set Content-Type: application/json on EVERY response including errors.
+
+> STEP 3 — Implement the four endpoints, matching docs/api_spec.md exactly on field names. Load all data from the CSVs. Validate {id} and return 400 with a JSON error body for malformed input.
+
+> STEP 4 — Build and verify before committing. go build must succeed. Start the server and curl each endpoint. Paste the actual commands and responses. Confirm status codes and Content-Type headers. Fix and re-test anything that doesn't match the spec.
+
+> STEP 5 — Document and commit. Create platform/api/README.md beginning with the H1: # Task 3: Go API Implementation. Then commit only the Go project + README. Re-check every box before committing.
+
+**Prompting Technique:** Ordered steps with a mandatory verification gate — each step builds on the last; STEP 4 (verify all endpoints against the spec with actual curl output) must complete before STEP 5 (document and commit) begins. The spec is designated the single source of truth in STEP 1 before any code is written.
+
+**Why this technique:** Naming the spec as source of truth in the first prompt prevents the implementation from drifting — every field name, status code, and error body is checked against `docs/api_spec.md` rather than inferred from memory. The ordered steps enforce a strict build → verify → commit sequence, which caught the stray compiled binary before it was part of the canonical commit (the `api` binary was in the untracked list but was added by `git add platform/api`; a `.gitignore` added in STEP 2 would have prevented it).
+
+**What Happened:**
+
+*STEP 1 — Contract report:*
+- Cross-referenced `docs/api_spec.md` with live column headers from all three source CSVs. Produced a complete JSON key → CSV column → Go type mapping for all four endpoints before any code was written.
+- Four parsing hazards identified upfront: five column names with spaces (`Device Type`, `Device Class`, `under review`, `Owner Name`, `Owner Address`); three different date formats across the CSVs requiring separate Go parse layouts; NaN serialised as empty string by encoding/csv; join key casing mismatch (`InspectionNumber` vs `inspectionnumber`).
+
+*STEP 2 — Scaffold:*
+- Module path: `github.com/charleswinfield108/Rocket_Dashboard/platform/api`. Go 1.22.4, zero external dependencies.
+- `server` struct pattern chosen so handlers have access to config and loaded data via receiver methods — avoids global state without a dependency injection framework.
+- `jsonMiddleware` wraps the entire mux so `Content-Type: application/json; charset=utf-8` is set before any handler writes status or body, including error paths. `writeError` calls `w.WriteHeader(status)` then `json.Encode` — never `http.Error`, which would override the middleware-set Content-Type with `text/plain`.
+- Smoke test confirmed stubs returned 501 with correct Content-Type before implementation began.
+
+*STEP 3 — Implementation (three files):*
+- `data.go`: internal row types, `readCSV` helper, `colIdx` map for header lookup (handles column names with spaces), `parseDate` trying four layouts in order, `optStr`/`optInt` for empty-string-to-null coercion.
+- `data.go loadPredictions()`: non-fatal — file-not-found sets `predictionsLoaded = false`; the handler returns 503 at request time rather than crashing at startup.
+- `handlers.go`: `lookupElevator` shared helper checks merged CSV first so both `/inspections` and `/risk` return 404 (not 503) for unknown elevator IDs. `make([]orderItem, 0, ...)` used instead of `nil` so empty orders arrays marshal to `[]` not `null`. ISO 8601 sort of `LatestDate` strings works lexicographically.
+
+*STEP 4 — Verification (14 curl checks):*
+- All 14 checks passed against live server output. Confirmed: 8-field fleet items, 21-field detail, `under_review` as boolean, `license_expiry` normalised from `28-Apr-17` → `"2017-04-28"`, null fields for elevator 1009 (no alteration history), inspections descending by date, `"orders":[]` not `null` for inspections with no orders, 503/404 precedence on `/risk`, `Content-Type: application/json; charset=utf-8` on all 200/400/404/503 responses.
+- One fix needed post-verification: `go build ./...` had left a compiled `api` binary in `platform/api/`; `git add platform/api` picked it up. Resolved with `git rm --cached` and a `.gitignore` entry in a follow-up commit.
+
+*STEP 5 — README and commit:*
+- `platform/api/README.md` covers run commands (port, DATA_DIR), endpoint table, status code table, data sources table, project layout.
+- Committed as `feat: implement Go API server with four endpoints (Task 3)` (commit `51107a8`), followed immediately by `chore: untrack compiled binary, add platform/api/.gitignore` (commit `3ecb2fb`).
+
+**Key Decision — `loadPredictions` non-fatal at startup:**
+Making predictions loading non-fatal was a deliberate choice. The alternative — failing startup when `predictions.csv` is absent — would block the API from running for the entire period between Task 3 and Task 6. The spec explicitly says the endpoint returns 503 until the file is generated, which implies the server should be runnable without it. The approach also means the 503 message can tell clients exactly why predictions are unavailable and when the file will be generated, rather than preventing the server from starting at all.
+
+**What I Would Change:**
+A `.gitignore` containing `api` (the binary name) should have been created in STEP 2 alongside `go.mod` — before any `go build` was ever run. Adding it retroactively after the binary was committed required an extra cleanup commit. The binary name matches the directory name (`platform/api/`), which is a common Go pattern, so this is a predictable hazard that should have been addressed in the scaffold step.
+
+---
+
