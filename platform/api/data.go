@@ -54,20 +54,23 @@ type orderRow struct {
 	ElevatingDevicesNumber int
 	InspectionNumber       int
 	RiskScore              float64
+	HasRiskScore           bool // false when RISKSCORE cell was empty; guards mean_risk_score denominator
 	Directive              *string
 	Description            *string
 	Status                 string
-	DateIssued             string  // ISO 8601 date-only after parsing
+	DateIssued             string // ISO 8601 date-only after parsing
 	DaysToComply           *int
 	ComplianceDate         *string // ISO 8601 after parsing
 }
 
 type predictionRow struct {
-	PredictedOutcome   string
-	Confidence         float64
-	ClassProbabilities map[string]float64
+	PredictedOutcome   string               // predicted_outcome — argmax class name
+	Confidence         float64              // confidence — probability of the argmax class
+	ClassProbabilities map[string]jsonFloat // prob_* columns — all 13 outcome class probs
+	RiskScore          float64              // risk_score — P("Follow up"), used for fleet list risk_level
+	RiskLevel          string               // risk_level — high / medium / low
 	ModelVersion       string
-	GeneratedAt        string // ISO 8601
+	AsOfDate           string // prediction_date column, normalised to ISO 8601
 }
 
 // ── date normalisation ────────────────────────────────────────────────────────
@@ -324,10 +327,12 @@ func (s *server) loadOrders() error {
 			continue
 		}
 
+		rawRS := strings.TrimSpace(cell(row, idx, "RISKSCORE"))
 		ord := &orderRow{
 			ElevatingDevicesNumber: elevID,
 			InspectionNumber:       inspNum,
-			RiskScore:              mustFloat(cell(row, idx, "RISKSCORE")),
+			RiskScore:              mustFloat(rawRS),
+			HasRiskScore:           rawRS != "",
 			Directive:              optStr(cell(row, idx, "DIRECTIVE")),
 			Description:            optStr(cell(row, idx, "Inspectionsadditionalinformation")),
 			Status:                 cell(row, idx, "StatusofInspectionOrder"),
@@ -355,7 +360,7 @@ func (s *server) loadPredictions() {
 	}
 	idx := colIdx(headers)
 
-	// Map from outcome class label (as it appears in JSON) to CSV column name
+	// prob_* column → JSON response class label mapping (spec §5.4).
 	probCols := map[string]string{
 		"All Orders Resolved": "prob_all_orders_resolved",
 		"Complete":            "prob_complete",
@@ -374,24 +379,28 @@ func (s *server) loadPredictions() {
 
 	s.predictions = make(map[int]*predictionRow, len(rows))
 	for _, row := range rows {
-		elevID, err := mustInt(cell(row, idx, "ElevatingDevicesNumber"))
-		if err != nil {
+		// elevator_id is stored as "EL-XXXXXXXX"; strip prefix, parse int.
+		raw := strings.TrimPrefix(strings.TrimSpace(cell(row, idx, "elevator_id")), "EL-")
+		elevID, err := strconv.Atoi(raw)
+		if err != nil || elevID <= 0 {
 			continue
 		}
-		probs := make(map[string]float64, len(probCols))
+		probs := make(map[string]jsonFloat, len(probCols))
 		for label, col := range probCols {
-			probs[label] = mustFloat(cell(row, idx, col))
+			probs[label] = jsonFloat(mustFloat(cell(row, idx, col)))
 		}
 		pred := &predictionRow{
-			PredictedOutcome:   cell(row, idx, "predicted_outcome"),
+			PredictedOutcome:   strings.TrimSpace(cell(row, idx, "predicted_outcome")),
 			Confidence:         mustFloat(cell(row, idx, "confidence")),
 			ClassProbabilities: probs,
-			ModelVersion:       cell(row, idx, "model_version"),
+			RiskScore:          mustFloat(cell(row, idx, "risk_score")),
+			RiskLevel:          strings.TrimSpace(cell(row, idx, "risk_level")),
+			ModelVersion:       strings.TrimSpace(cell(row, idx, "model_version")),
 		}
-		if d := parseDate(cell(row, idx, "generated_at")); d != nil {
-			pred.GeneratedAt = *d
+		if d := parseDate(cell(row, idx, "prediction_date")); d != nil {
+			pred.AsOfDate = *d
 		}
 		s.predictions[elevID] = pred
 	}
-	s.predictionsLoaded = true
+	s.predictionsLoaded = len(s.predictions) > 0
 }

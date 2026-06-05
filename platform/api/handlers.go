@@ -30,7 +30,7 @@ func (s *server) writeJSON(w http.ResponseWriter, status int, v any) {
 
 // ── response types (spec §5) ──────────────────────────────────────────────────
 
-// fleetItem is one entry in the GET /api/elevators list (8 fields per spec).
+// fleetItem is one entry in the GET /api/elevators list (8 spec fields + risk_level).
 type fleetItem struct {
 	ID                      int     `json:"id"`
 	Location                string  `json:"location"`
@@ -115,14 +115,14 @@ type inspectionsResponse struct {
 }
 
 type riskResponse struct {
-	ElevatorID       int                `json:"elevator_id"`
-	PredictedOutcome string             `json:"predicted_outcome"`
-	Confidence       float64            `json:"confidence"`
-	ClassProbs       map[string]float64 `json:"class_probabilities"`
-	OpenOrdersCount  int                `json:"open_orders_count"`
-	MeanRiskScore    *float64           `json:"mean_risk_score"`
-	ModelVersion     string             `json:"model_version"`
-	AsOfDate         string             `json:"as_of_date"`
+	ElevatorID       int                  `json:"elevator_id"`
+	PredictedOutcome string               `json:"predicted_outcome"`
+	Confidence       float64              `json:"confidence"`
+	ClassProbs       map[string]jsonFloat `json:"class_probabilities"`
+	OpenOrdersCount  int                  `json:"open_orders_count"`
+	MeanRiskScore    *float64             `json:"mean_risk_score"`
+	ModelVersion     string               `json:"model_version"`
+	AsOfDate         string               `json:"as_of_date"`
 }
 
 // ── shared helpers ────────────────────────────────────────────────────────────
@@ -336,19 +336,26 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute open-order count and mean risk score from order.csv at request time.
+	// open_orders_count: count of OPEN orders.
+	// mean_risk_score: mean over orders that have a non-empty RISKSCORE cell only;
+	// empty cells must not contribute to the denominator (they coerce to 0.0 and
+	// dilute the mean — elevator 10 has 7 empty out of 24 rows).
 	orders := s.ordersByElev[e.ID]
 	openCount := 0
 	var riskSum float64
+	var riskCount int
 	for _, ord := range orders {
 		if ord.Status == "OPEN" {
 			openCount++
 		}
-		riskSum += ord.RiskScore
+		if ord.HasRiskScore {
+			riskSum += ord.RiskScore
+			riskCount++
+		}
 	}
 	var meanRisk *float64
-	if len(orders) > 0 {
-		v := riskSum / float64(len(orders))
+	if riskCount > 0 {
+		v := riskSum / float64(riskCount)
 		meanRisk = &v
 	}
 
@@ -360,6 +367,6 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		OpenOrdersCount:  openCount,
 		MeanRiskScore:    meanRisk,
 		ModelVersion:     pred.ModelVersion,
-		AsOfDate:         pred.GeneratedAt,
+		AsOfDate:         pred.AsOfDate,
 	})
 }
