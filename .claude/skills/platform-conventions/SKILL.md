@@ -45,3 +45,7 @@ Do not return JSON from endpoints that HTMX will consume. HTMX swaps HTML; a JSO
 Files under `data/` are source datasets — **do not modify them**. Any derived outputs (merged CSVs, processed files, generated assets) belong in `intelligence/` or `platform/assets/`, not in `data/`.
 
 If a new endpoint or pipeline needs a derived file, write it to the appropriate output directory and load from there — never overwrite or append to the source files in `data/`.
+
+## Generated Data Files
+
+`data/predictions.csv` is a **GENERATED ARTIFACT**. It is produced by running `intelligence/generate_predictions.ipynb` (Restart Kernel and Run All) and must never be hand-edited. To change predictions, modify the notebook and regenerate.
