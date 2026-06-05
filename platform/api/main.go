@@ -63,6 +63,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/elevators/{id}", s.handleGetElevator)
 	mux.HandleFunc("GET /api/elevators/{id}/inspections", s.handleGetInspections)
 	mux.HandleFunc("GET /api/elevators/{id}/risk", s.handleGetRisk)
+	mux.HandleFunc("GET /api/fleet/stats", s.handleFleetStats)
+	mux.HandleFunc("GET /api/fleet/alerts", s.handleFleetAlerts)
 	return jsonMiddleware(mux)
 }
 

@@ -467,6 +467,158 @@ _Note: `class_probabilities` keys are the exact string values of `outcome_class`
 
 ---
 
+### 5.5 `GET /api/fleet/stats`
+
+**Method:** `GET`
+**Path:** `/api/fleet/stats`
+**Description:** Returns aggregate statistics for the entire elevator fleet. Draws total elevator count and equipment-type breakdown from `merged_elevator_data.csv`, inspection pass rate from `inspection.csv`, and risk-level counts from `predictions.csv`. Risk-level fields are `null` when `predictions.csv` has not been loaded.
+
+#### Query parameters
+
+None.
+
+#### Response — 200 OK
+
+```json
+{
+  "total_elevators": 43251,
+  "inspection_pass_rate": 0.3767,
+  "total_inspections": 143181,
+  "risk_levels": {
+    "high": 211,
+    "medium": 11408,
+    "low": 29335,
+    "unscored": 3429
+  },
+  "equipment_types": {
+    "Passenger Elevator": 39975,
+    "Freight Elevator": 1786,
+    "LULA Elevator": 1181,
+    "Observation Elevator": 303,
+    "Other": 6
+  }
+}
+```
+
+When `predictions.csv` is not loaded, `risk_levels` is `null`:
+
+```json
+{
+  "total_elevators": 43251,
+  "inspection_pass_rate": 0.3767,
+  "total_inspections": 143181,
+  "risk_levels": null,
+  "equipment_types": {
+    "Passenger Elevator": 39975,
+    "Freight Elevator": 1786,
+    "LULA Elevator": 1181,
+    "Observation Elevator": 303,
+    "Other": 6
+  }
+}
+```
+
+#### Response field types
+
+| Field | JSON type | Source column | Source file |
+|-------|-----------|---------------|-------------|
+| `total_elevators` | number (int) | `ElevatingDevicesNumber` row count | `merged_elevator_data.csv` |
+| `inspection_pass_rate` | number (float, 4 d.p.) | `InspectionOutcome` | `inspection.csv` |
+| `total_inspections` | number (int) | `InspectionNumber` row count | `inspection.csv` |
+| `risk_levels` | object or null | `risk_level` | `predictions.csv` |
+| `risk_levels.high` | number (int) | `risk_level = "high"` | `predictions.csv` |
+| `risk_levels.medium` | number (int) | `risk_level = "medium"` | `predictions.csv` |
+| `risk_levels.low` | number (int) | `risk_level = "low"` | `predictions.csv` |
+| `risk_levels.unscored` | number (int) | elevators in `merged_elevator_data.csv` with no prediction row | computed |
+| `equipment_types` | object | `Device Type` | `merged_elevator_data.csv` |
+| `equipment_types.<name>` | number (int) | count of rows with that `Device Type` value | `merged_elevator_data.csv` |
+
+**Pass outcomes** (used to compute `inspection_pass_rate`): `Passed`, `Passed Major`, `Passed Sub`, `Complete`, `Complete Enforcement`, `All Orders Resolved`. All other `InspectionOutcome` values are treated as non-pass.
+
+#### Error responses
+
+| HTTP status | `error` code | Condition |
+|-------------|--------------|-----------|
+| `500` | `INTERNAL_ERROR` | `merged_elevator_data.csv` or `inspection.csv` cannot be read |
+
+```json
+{
+  "error": "INTERNAL_ERROR",
+  "message": "failed to read inspection data"
+}
+```
+
+---
+
+### 5.6 `GET /api/fleet/alerts`
+
+**Method:** `GET`
+**Path:** `/api/fleet/alerts`
+**Description:** Returns elevators requiring immediate attention — those with both a `high` risk level (from `predictions.csv`) and a non-passing most-recent inspection outcome (from `inspection.csv`). Results are sorted by `risk_score` descending. Returns an empty array when no elevators meet both conditions. Returns 503 when `predictions.csv` has not been loaded.
+
+#### Query parameters
+
+None.
+
+#### Response — 200 OK
+
+```json
+[
+  {
+    "elevator_id": 27557,
+    "risk_score": 0.908,
+    "risk_level": "high",
+    "last_inspection_date": "2014-03-05",
+    "last_inspection_outcome": "Follow up",
+    "equipment_type": "Passenger Elevator"
+  },
+  {
+    "elevator_id": 27558,
+    "risk_score": 0.8684,
+    "risk_level": "high",
+    "last_inspection_date": "2014-03-05",
+    "last_inspection_outcome": "Follow up",
+    "equipment_type": "Passenger Elevator"
+  }
+]
+```
+
+Returns `[]` (empty JSON array) when no elevators meet both conditions.
+
+#### Response field types
+
+| Field | JSON type | Source column | Source file |
+|-------|-----------|---------------|-------------|
+| `elevator_id` | number (int) | `ElevatingDevicesNumber` | `merged_elevator_data.csv` |
+| `risk_score` | number (float) | `risk_score` | `predictions.csv` |
+| `risk_level` | string | `risk_level` | `predictions.csv` |
+| `last_inspection_date` | string (ISO 8601 date) or null | `Latest_INSPECTION_Date` | `inspection.csv` |
+| `last_inspection_outcome` | string | `InspectionOutcome` | `inspection.csv` |
+| `equipment_type` | string | `Device Type` | `merged_elevator_data.csv` |
+
+**Alert criteria:** An elevator appears in this response when ALL of the following are true:
+1. Its `risk_level` in `predictions.csv` is `"high"`.
+2. Its most-recent inspection outcome (the row with the lexicographically greatest `Latest_INSPECTION_Date`) is NOT one of the pass outcomes: `Passed`, `Passed Major`, `Passed Sub`, `Complete`, `Complete Enforcement`, `All Orders Resolved`.
+
+Elevators with no inspection record, or with no prediction row, are excluded.
+
+**Sort order:** Descending by `risk_score`.
+
+#### Error responses
+
+| HTTP status | `error` code | Condition |
+|-------------|--------------|-----------|
+| `503` | `PREDICTIONS_UNAVAILABLE` | `predictions.csv` not loaded |
+
+```json
+{
+  "error": "PREDICTIONS_UNAVAILABLE",
+  "message": "predictions are not yet available"
+}
+```
+
+---
+
 ## 6. Verification Criteria
 
 ### `GET /api/elevators`

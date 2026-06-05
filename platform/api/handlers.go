@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -369,4 +370,166 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		ModelVersion:     pred.ModelVersion,
 		AsOfDate:         pred.AsOfDate,
 	})
+}
+
+// ── fleet-stats ───────────────────────────────────────────────────────────────
+
+type riskLevelCounts struct {
+	High     int `json:"high"`
+	Medium   int `json:"medium"`
+	Low      int `json:"low"`
+	Unscored int `json:"unscored"`
+}
+
+type fleetStatsResponse struct {
+	TotalElevators     int              `json:"total_elevators"`
+	InspectionPassRate jsonFloat        `json:"inspection_pass_rate"`
+	TotalInspections   int              `json:"total_inspections"`
+	RiskLevels         *riskLevelCounts `json:"risk_levels"`
+	EquipmentTypes     map[string]int   `json:"equipment_types"`
+}
+
+// passOutcomes is the set of InspectionOutcome values counted as a pass.
+var passOutcomes = map[string]bool{
+	"Passed":               true,
+	"Passed Major":         true,
+	"Passed Sub":           true,
+	"Complete":             true,
+	"Complete Enforcement": true,
+	"All Orders Resolved":  true,
+}
+
+// GET /api/fleet-stats
+func (s *server) handleFleetStats(w http.ResponseWriter, r *http.Request) {
+	// Equipment-type counts — from already-loaded elevator data.
+	equipTypes := make(map[string]int)
+	for _, e := range s.elevators {
+		if e.DeviceType != "" {
+			equipTypes[e.DeviceType]++
+		}
+	}
+
+	// Inspection pass rate — read inspection.csv at request time.
+	inspPath := s.cfg.dataDir + "/inspection.csv"
+	inspHeaders, inspRows, err := readCSV(inspPath)
+	if err != nil {
+		s.writeError(w, 500, "INTERNAL_ERROR", "failed to read inspection data")
+		return
+	}
+	idx := colIdx(inspHeaders)
+	totalInsp := len(inspRows)
+	passed := 0
+	for _, row := range inspRows {
+		outcome := strings.TrimSpace(cell(row, idx, "InspectionOutcome"))
+		if passOutcomes[outcome] {
+			passed++
+		}
+	}
+	var passRate jsonFloat
+	if totalInsp > 0 {
+		passRate = jsonFloat(math.Round(float64(passed)/float64(totalInsp)*10000) / 10000)
+	}
+
+	// Risk-level counts — from in-memory predictions (nil when not loaded).
+	var riskCounts *riskLevelCounts
+	if s.predictionsLoaded {
+		counts := riskLevelCounts{}
+		for _, pred := range s.predictions {
+			switch pred.RiskLevel {
+			case "high":
+				counts.High++
+			case "medium":
+				counts.Medium++
+			case "low":
+				counts.Low++
+			}
+		}
+		scored := 0
+		for id := range s.elevators {
+			if _, ok := s.predictions[id]; ok {
+				scored++
+			}
+		}
+		counts.Unscored = len(s.elevators) - scored
+		riskCounts = &counts
+	}
+
+	s.writeJSON(w, http.StatusOK, fleetStatsResponse{
+		TotalElevators:     len(s.elevators),
+		InspectionPassRate: passRate,
+		TotalInspections:   totalInsp,
+		RiskLevels:         riskCounts,
+		EquipmentTypes:     equipTypes,
+	})
+}
+
+// ── fleet-alerts ──────────────────────────────────────────────────────────────
+
+type alertItem struct {
+	ElevatorID            int       `json:"elevator_id"`
+	RiskScore             jsonFloat `json:"risk_score"`
+	RiskLevel             string    `json:"risk_level"`
+	LastInspectionDate    *string   `json:"last_inspection_date"`
+	LastInspectionOutcome string    `json:"last_inspection_outcome"`
+	EquipmentType         string    `json:"equipment_type"`
+}
+
+// GET /api/fleet-alerts
+func (s *server) handleFleetAlerts(w http.ResponseWriter, r *http.Request) {
+	if !s.predictionsLoaded {
+		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
+			"predictions are not yet available")
+		return
+	}
+
+	alerts := make([]alertItem, 0)
+
+	for elevID, pred := range s.predictions {
+		if pred.RiskLevel != "high" {
+			continue
+		}
+
+		// Find the most-recent inspection row for this elevator.
+		inspections := s.inspByElev[elevID]
+		if len(inspections) == 0 {
+			continue // no inspection record — skip
+		}
+		latest := inspections[0]
+		for _, insp := range inspections[1:] {
+			if insp.LatestDate > latest.LatestDate {
+				latest = insp
+			}
+		}
+
+		// Only alert if the most-recent outcome is not a pass.
+		if passOutcomes[latest.Outcome] {
+			continue
+		}
+
+		e := s.elevators[elevID]
+		var lastDate *string
+		if latest.LatestDate != "" {
+			d := latest.LatestDate
+			lastDate = &d
+		}
+		equipType := ""
+		if e != nil {
+			equipType = e.DeviceType
+		}
+		alerts = append(alerts, alertItem{
+			ElevatorID:            elevID,
+			RiskScore:             jsonFloat(pred.RiskScore),
+			RiskLevel:             pred.RiskLevel,
+			LastInspectionDate:    lastDate,
+			LastInspectionOutcome: latest.Outcome,
+			EquipmentType:         equipType,
+		})
+	}
+
+	// Sort descending by risk_score.
+	sort.Slice(alerts, func(i, j int) bool {
+		return alerts[i].RiskScore > alerts[j].RiskScore
+	})
+
+	s.writeJSON(w, http.StatusOK, alerts)
 }
