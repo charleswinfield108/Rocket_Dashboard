@@ -1494,3 +1494,68 @@ A `.gitignore` containing `api` (the binary name) should have been created in ST
 
 ---
 
+## Entry 39 — 2026-06-05
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 6 — Pre-Compute and Serve Predictions (completion and validation)
+
+---
+
+**Prompts:**
+> What task and prompt are we on?
+
+> Has this been completed: Start by writing a markdown header for this work: '# Task 6: Pre-Compute and Serve Predictions'. Create/complete the notebook `intelligence/generate_predictions.ipynb`… [STEP 1–4 detailed specs] Do NOT save to disk yet — that's the next prompt, after validation.
+
+> Has this been completed: Before writing predictions.csv, add validation cells that ASSERT… [three assertions + validation summary + save prompt]
+
+> [/validate-api /api/elevators/10/risk] — first run with D9 float-serialisation failure; applied fix; re-ran → CONFORMS
+
+> [/validate-api /api/elevators/\<known-id\>/risk] — confirmation run → CONFORMS
+
+> [/validate-api /api/elevators] — DOES NOT CONFORM (D7: undocumented `risk_level` field)
+
+> Endpoint \<path\> failed on \<dimension\>. Show me the spec snippet, the predictions data for that id, and the Go handler, apply the minimal fix, then re-run /validate-api \<path\> and confirm it CONFORMS.
+
+> Update `.claude/skills/platform-conventions/SKILL.md`. Add a convention for generated data files… Keep the existing conventions intact — append, don't replace.
+
+> Commit in logical, separately-messaged commits: the prediction pipeline… the Go API changes… the updated platform-conventions skill.
+
+> Log the interaction. commit and push.
+
+**Prompting Technique:** Audit-before-continue — each completed prompt was verified with an explicit "Has this been completed?" question before moving on to live validation. The fix protocol for validator failures was templated: "Show me the spec snippet, the predictions data for that id, and the Go handler, apply the minimal fix, then re-run /validate-api and confirm it CONFORMS." This three-part structure (show evidence → fix → re-confirm) was applied consistently to both failures encountered in the session.
+
+**Why this technique:** Starting a resumed session with "Has this been completed?" questions is a low-cost way to surface scope drift from prior sessions — it forces an explicit audit against the original prompt text rather than assuming continuity. The templated fix protocol works because it front-loads evidence gathering (spec snippet + live data + handler code) before any code is written, so the fix addresses the actual mismatch rather than a paraphrase of it. Re-running the validator after each fix closes the loop and prevents compounding failures.
+
+**What Happened:**
+
+*Audit (prompts A and B):*
+- Prompt A (STEP 1–4, notebook creation): confirmed complete. One deliberate expansion — STEP 4 also produces `predicted_outcome`, `confidence`, and 13 `prob_*` columns beyond the originally specified 5-column schema, added in a later prompt to satisfy the API spec's `class_probabilities` requirement.
+- Prompt B (validation cells + save): confirmed complete. All three assertions implemented and passing. CSV saved with 20 columns (not the original 5), backward-compatible with the 5-column schema — the five original fields are present in their specified positions.
+
+*Float-serialisation fix (D9):*
+- `class_probabilities` entries with value 0.0 serialised as integer `0` in Go's `encoding/json`. Affected three keys: `"Fail Initial"`, `"Follow Up Initial"`, `"Passed"`.
+- Fix: changed `ClassProbabilities map[string]float64` to `map[string]jsonFloat` in both `predictionRow` (data.go) and `riskResponse` (handlers.go). Also updated the `make(map[string]float64, ...)` in `loadPredictions()` to `make(map[string]jsonFloat, ...)` with explicit `jsonFloat(...)` cast on each value.
+- `/validate-api /api/elevators/10/risk` re-run → CONFORMS (all 15 dimensions pass).
+
+*List endpoint conformance fix (D7):*
+- `/validate-api /api/elevators` → DOES NOT CONFORM: `risk_level` field present on every elevator element, not defined in §5.1 (which specifies exactly 8 fields).
+- The field had been explicitly added by a prior prompt ("Update `/api/elevators` list to include `risk_level` per item"), but the spec for that endpoint does not include it.
+- Fix: removed `RiskLevel *string` from `fleetItem` struct; removed the prediction-map join and `RiskLevel: riskLevel` from `handleListElevators`.
+- `/validate-api /api/elevators` re-run → CONFORMS (all 16 dimensions pass).
+
+*Skill and commits:*
+- `platform-conventions/SKILL.md`: "Generated Data Files" section appended; existing content unchanged.
+- Three commits: `8e5bba9` (notebook + CSV), `b316544` (Go API handler + list fix), `4427e2f` (skill update).
+
+**Key Decision — `jsonFloat` for map values:**
+Go's `encoding/json` marshals `float64(0.0)` as `0` — it only includes a decimal point when the value has a fractional component. Because `class_probabilities` values must be JSON numbers typed as floats (the spec requires them in [0.0, 1.0] and clients may use the decimal point to distinguish float from int), a custom `jsonFloat` type with a `MarshalJSON` method was introduced in Task 5 for scalar fields. Extending it to map values required changing the map's value type from `float64` to `jsonFloat` — Go's `encoding/json` calls `MarshalJSON` on each map value when the value type implements `json.Marshaler`.
+
+**Key Decision — `risk_level` removed from list endpoint:**
+The field was added deliberately in a prior prompt. When the spec flagged it as undocumented, the spec won the argument. `risk_level` is a derived prediction attribute — it belongs on `/risk`, where it appears as part of the prediction response. Surfacing it on the fleet list would create a second exposure of prediction data outside the `/risk` contract, which adds coupling without a spec-backed reason. The right fix for any future need is to update §5.1 of the spec first, then re-add the field.
+
+**What I Would Change:**
+The `risk_level` list-endpoint conflict arose because a prompt was implemented without checking the spec for that endpoint first. Running `/validate-api /api/elevators` immediately after the list handler was modified (rather than only at the end of the task) would have caught the extra field before it was committed. A better practice: treat `/validate-api` as a post-change gate after every handler modification, not just as a final end-of-task check.
+
+---
+
