@@ -1559,3 +1559,64 @@ The `risk_level` list-endpoint conflict arose because a prompt was implemented w
 
 ---
 
+## Entry 40 — 2026-06-05
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 7 — Fleet Health Feature
+
+---
+
+**Prompts:**
+> Start with a markdown header: "# Task 7: Fleet Health Feature". Create a user-invocable skill at `.claude/skills/new-endpoint/SKILL.md`... [full four-step workflow spec]
+
+> [/new-endpoint fleet-stats "Returns aggregate fleet statistics"] — with business requirements and four edge-case pre-questions
+
+> [/new-endpoint fleet-alerts "Returns elevators needing immediate attention"] — with business requirements and four join-decision pre-questions
+
+> Review what the new-endpoint skill produced for both fleet/stats and fleet/alerts... run /validate-api on both, spot-check data
+
+> Did we achieve this step? Reflect on friction, identify one CC extension, implement it, test it, document it.
+
+**Prompting Technique:** Phased delivery with a retrospective extension prompt — the main work (skill creation + two endpoints) was followed by a structured friction analysis requiring the model to identify the actual pain point before deciding on an extension mechanism. The extension prompt forced a three-way comparison (hook / skill / subagent) before implementation, preventing a default-to-skill choice without justification.
+
+**Why this technique:** Asking "what friction did you actually experience in this task specifically" before "what extension would help" prevents generic suggestions. The three-mechanism comparison forces a deliberate choice with articulated tradeoffs rather than defaulting to the most familiar pattern.
+
+**What Happened:**
+
+*new-endpoint skill:*
+- Created at `.claude/skills/new-endpoint/SKILL.md` with `user-invocable: true`, four-step workflow (SPEC UPDATE → CODE GENERATION → ROUTE REGISTRATION → VALIDATION).
+- Later updated to five steps after the data-profiler extension was implemented (STEP 0 added before spec).
+
+*fleet/stats endpoint:*
+- Four edge cases answered before coding: pass outcomes are 6 specific strings (not a binary column); unscored elevators excluded from risk-level counts but counted as `unscored`; denominator is all inspection records (each row = one unique InspectionNumber); predictions absent → `risk_levels: null`.
+- Handler written, validated → **FAIL on D11** (`unscored` count = 2297, expected 3429). Root cause: `len(s.predictions)` includes 1,132 prediction rows with IDs absent from `merged_elevator_data.csv`. Fixed with a join-based count (`for id := range s.elevators { if _, ok := s.predictions[id]; ok { scored++ } }`). Re-validated → **CONFORMS**.
+
+*fleet/alerts endpoint:*
+- Four join decisions answered before coding: join key is `ElevatingDevicesNumber` across all three sources; most-recent inspection by ISO 8601 lexicographic max of `LatestDate`; elevator with no inspection → skip; elevator with no prediction → skip.
+- Initial Python analysis predicted 144 alerts (wrong). Server returned 211. Root cause: Python compared raw M/D/YYYY date strings; Go server normalizes dates to ISO 8601 at load time. Correct answer is 211. Re-analyzed with normalized dates → confirmed.
+- Validated → **CONFORMS** (all 13 dimensions pass, 211 alert items, correctly sorted by risk_score descending).
+
+*data-profiler subagent:*
+- Implemented at `.claude/agents/data-profiler.md`.
+- Profiles: row counts, enum distributions, date-column format samples with ISO 8601 flag, and cross-file join coverage matrix.
+- Test run against fleet-alerts' three sources confirmed it would have caught both bugs before any code was written: `inspection.csv`'s `Latest_INSPECTION_Date` flagged `*** NOT ISO 8601 ***`; `predictions → merged` join matrix shows `len(merged) - len(predictions) = 2297 ← WRONG`, correct unscored = 3429.
+
+*Route path correction:*
+- Original routes were `/api/fleet-stats` and `/api/fleet-alerts` (hyphenated). Task spec required `/api/fleet/stats` and `/api/fleet/alerts` (slash-separated). Corrected in `main.go` and `docs/api_spec.md`.
+
+**Key Decision — Subagent over hook or skill for data profiling:**
+
+Three mechanisms were evaluated against the specific friction (bugs caused by unverified data assumptions):
+
+*Hook:* Fires on a tool event (pre-write, post-stop). Would need to trigger before writing a handler. Pre-write hooks run in the main context, cannot issue CSV analysis, and would fire on every file write regardless of relevance. Ruled out — too broad, too noisy, wrong timing.
+
+*Skill:* User-invocable on demand. Would require the developer to remember to call `/profile-data` before starting. Doesn't integrate into the new-endpoint workflow automatically — the bug was caused by not profiling, so making profiling optional defeats the purpose.
+
+*Subagent:* Autonomous, multi-step analysis worker with its own context. CSV profiling involves reading multiple 40-143k row files, computing distributions, resolving join keys, and comparing format patterns — genuinely multi-step work that benefits from isolation so it doesn't flood the main conversation with raw analysis output. Can be embedded as a mandatory STEP 0 in the new-endpoint skill, making it automatic rather than opt-in. Chosen.
+
+**What I Would Change:**
+The `data-profiler` subagent was implemented as a project-level agent at `.claude/agents/data-profiler.md`, but it wasn't available as a registered subagent type during the session in which it was created — it would only appear in new sessions. A better development practice: implement project agents at the start of a task session so they're available for that session's testing, rather than implementing them as part of the task they're meant to facilitate.
+
+---
+
