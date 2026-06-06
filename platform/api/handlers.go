@@ -518,6 +518,9 @@ func (s *server) handleFleetAlerts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		e := s.elevators[elevID]
+		if e == nil {
+			continue // prediction row has no matching elevator in merged_elevator_data.csv — skip
+		}
 		var lastDate *string
 		if latest.LatestDate != "" {
 			d := latest.LatestDate
