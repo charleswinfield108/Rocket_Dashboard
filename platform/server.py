@@ -85,6 +85,16 @@ CITIES     = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
 STATUSES   = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
 
 
+def _ensure_cache():
+    """If the cache loaded empty at startup, retry now. No-op when populated."""
+    global _ELEVATORS, CITIES, STATUSES
+    if _ELEVATORS:
+        return
+    _ELEVATORS = _load_elevator_cache()
+    CITIES   = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
+    STATUSES = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
+
+
 # ── Summary statistics (computed once from cache) ─────────────────────────────
 
 def _stats():
@@ -172,11 +182,13 @@ def build_rows(elevators):
 
 @app.route("/")
 def index():
+    _ensure_cache()
     return render_template("index.html", cities=CITIES, statuses=STATUSES, **_stats())
 
 
 @app.route("/elevators")
 def elevators():
+    _ensure_cache()
     status       = request.args.get("status",       "All")
     city         = request.args.get("city",         "All")
     current_sort = request.args.get("sort",         "")
