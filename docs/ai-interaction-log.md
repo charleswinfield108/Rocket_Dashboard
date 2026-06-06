@@ -1620,3 +1620,90 @@ The `data-profiler` subagent was implemented as a project-level agent at `.claud
 
 ---
 
+## Entry 41 — 2026-06-05 (Reflection)
+
+**Type:** Extension review — most valuable extension across AND-104 Tasks 5–8
+
+**Extension:** `api-validator` subagent (`.claude/agents/api-validator.md`)
+**Created in:** AND-104, Task 5
+
+---
+
+**The specific moment:**
+
+Task 6. The `/api/elevators/{id}/risk` handler had just been written and the Go server was running. I ran `/validate-api /api/elevators/10/risk`. The report came back DOES NOT CONFORM on one dimension: the field data type check. Three entries in `class_probabilities` — `"Fail Initial":0`, `"Follow Up Initial":0`, `"Passed":0` — had serialized as integer `0` in the raw JSON, not float `0.0`.
+
+The source code was type-correct: the handler used `map[string]float64`. The bug was in Go's `encoding/json`, which encodes `float64(0.0)` as `0` when the value has no fractional part — a serialization edge case invisible to code review. A downstream client using a strictly-typed JSON schema would have rejected the response for those three keys. The fix was a custom `jsonFloat` type with a `MarshalJSON` method that appends `.0` when the formatted string contains no decimal point.
+
+Without the validator, this bug would have shipped. It would only have surfaced when a consumer tried to deserialize the response and found integers where floats were expected — a bug whose failure mode is distant from the code that caused it.
+
+**Why the subagent mechanism was right for this specific value:**
+
+The validator's value came from two things that are only possible as a subagent:
+
+1. **Fixed dimensions checked regardless of developer intent.** The validator checks 13 named dimensions on every run, including "field data types — float fields serialize as float." When I implemented the handler, I was thinking about field presence, error codes, and status codes. The float serialization dimension was not on my mental checklist. A skill that I invoke would check whatever I remembered to ask for; a subagent that runs a fixed protocol checks what I forgot.
+
+2. **Inspection of the raw wire format, not the source.** The validator issues a live curl request and inspects the raw JSON bytes — `"Fail Initial":0` vs `"Fail Initial":0.0`. Code review of the Go source would see `float64` and consider it correct. Only a tool that actually calls the running server and reads the response can catch the gap between type declaration and serialization behavior.
+
+A hook would need a trigger event — there is no natural event for "after an API endpoint is deployed and serving traffic." A skill would require me to write out the dimension checks explicitly, which defeats the purpose of a fixed protocol. The subagent is the right mechanism because the value is in the autonomous execution of a predetermined, consistent workflow, not in interactive guidance.
+
+**How it was used across Tasks 5–8:**
+
+- Task 5: caught missing error message text (D16 on `/api/elevators`) and float serialization for `risk_score` in orders (D8 on `/api/elevators/{id}/inspections`). Both required code fixes before the session ended.
+- Task 6: caught the `class_probabilities` zero-value float bug described above; caught that `risk_level` was absent from the list endpoint after we removed it (D7 on `/api/elevators`).
+- Task 7: caught the `unscored` join-orphan count error (D11 on `/api/fleet/stats`) — `2297` reported vs `3429` correct.
+- Task 8: ran all six endpoints before frontend work began; all six CONFORMS. Frontend proceeded on a confirmed stable API surface.
+
+The validator turned the API surface into a reliable foundation that other components could depend on. Every time a handler was changed, a single invocation confirmed or refuted conformance with a specific, actionable failure description. That reliability compounded across tasks.
+
+---
+
+## Entry 42 — 2026-06-05 (Reflection)
+
+**Type:** Extension review — extension that should be redesigned
+
+**Extension:** `new-endpoint` skill (`.claude/skills/new-endpoint/SKILL.md`)
+**Created in:** AND-104, Task 7
+
+---
+
+**The specific friction moment:**
+
+Task 7. I invoked `/new-endpoint fleet-stats "Returns aggregate fleet statistics"`. The skill's first argument is described as "the endpoint path" and its example shows `fleet-stats`. I implemented the route as `GET /api/fleet-stats` (hyphenated) and registered it in `main.go`. The spec section was written with `**Path:** \`/api/fleet-stats\``.
+
+Two tasks later, in Task 8, the evaluation criteria listed `GET /api/fleet/stats` (slash-separated). Both routes had to be renamed in `main.go` and both spec sections had to be updated in `api_spec.md`. The same issue applied to `fleet-alerts` → `fleet/alerts`. This was a retroactive fix for a decision the skill made silently.
+
+The same mismatch happened again when the Task 8 review prompt said `/validate-api /api/fleet/stats` — the validator was pointed at a path that didn't exist yet because the route was still named `fleet-stats` at that point in the conversation.
+
+**The root cause:**
+
+The skill accepts a short name (`fleet-stats`) and constructs the full path by prepending `/api/`. It treats the argument as a kebab-case name, not a path. The user says `fleet-stats` when they mean `fleet/stats`, and the skill has no way to distinguish between a hyphen used as a word separator and a slash used as a path segment separator. The slot is syntactically underspecified for its semantic purpose.
+
+**What I would change — specifically:**
+
+Change the invocation format from:
+
+```
+/new-endpoint fleet-stats "Returns aggregate fleet statistics"
+```
+
+to:
+
+```
+/new-endpoint /api/fleet/stats "Returns aggregate fleet statistics"
+```
+
+The first argument becomes the literal full path, starting with `/api/`. STEP 1 of the workflow uses it verbatim as the `**Path:**` in the spec section and as the route string in `mux.HandleFunc(...)`. No interpretation, no construction. The skill's usage line would read:
+
+```
+Usage: /new-endpoint /api/<full/path> "<description>"
+```
+
+This is two extra characters per invocation in exchange for eliminating an entire class of ambiguity. Path structure is semantically meaningful — whether `fleet-stats` is one resource or `fleet/stats` is a sub-resource of `fleet` changes the API's resource model. That decision should be explicit in the invocation, not inferred from a name.
+
+**Secondary issue — STEP 0 availability:**
+
+The data-profiler subagent added as STEP 0 of the skill cannot be used in the same session it was created because project-level agents are only registered at session start. In Task 7, I tested the data-profiler by running its Python commands directly rather than through the subagent. The skill's STEP 0 therefore remained untested as an integrated workflow step. For any future extension embedded in a skill, the extension must be created in a prior session before it can be exercised through the skill that calls it.
+
+---
+
