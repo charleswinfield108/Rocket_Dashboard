@@ -143,6 +143,7 @@ The Elevator Fleet Service is a Go HTTP API that exposes Ontario elevator fleet 
 | `elevators[].license_expiry` | string (ISO 8601 date) or null | `LICENSEEXPIRYDATE` | `merged_elevator_data.csv` |
 | `elevators[].latest_inspection_date` | string (ISO 8601 date) or null | `Latest_INSPECTION_Date` | `merged_elevator_data.csv` |
 | `elevators[].latest_inspection_outcome` | string or null | `InspectionOutcome` | `merged_elevator_data.csv` |
+| `elevators[].risk_level` | string (`"high"`, `"medium"`, `"low"`) or null | `risk_level` | `predictions.csv` (null when no prediction row exists) |
 
 #### Error responses
 
@@ -413,6 +414,8 @@ _Note: `service_request_number` and `inspection_number` values for elevator 10 b
   "elevator_id": 10,
   "predicted_outcome": "Follow up",
   "confidence": 0.58,
+  "risk_score": 0.58,
+  "risk_level": "medium",
   "class_probabilities": {
     "All Orders Resolved": 0.07,
     "Complete": 0.02,
@@ -444,6 +447,8 @@ _Note: `class_probabilities` keys are the exact string values of `outcome_class`
 | `elevator_id` | number (int) | `ElevatingDevicesNumber` | `predictions.csv` |
 | `predicted_outcome` | string | `predicted_outcome` | `predictions.csv` |
 | `confidence` | number (float, 0.0–1.0) | `confidence` | `predictions.csv` |
+| `risk_score` | number (float, 0.0–1.0) | `risk_score` (P("Follow up")) | `predictions.csv` |
+| `risk_level` | string (`"high"`, `"medium"`, `"low"`) | `risk_level` | `predictions.csv` |
 | `class_probabilities` | object (string → float) | `prob_*` columns | `predictions.csv` |
 | `open_orders_count` | number (int) | count of rows where `StatusofInspectionOrder = "OPEN"` | `order.csv` |
 | `mean_risk_score` | number (float) or null | mean of `RISKSCORE` across all orders for this elevator; null if no orders exist | `order.csv` |

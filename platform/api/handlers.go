@@ -31,7 +31,7 @@ func (s *server) writeJSON(w http.ResponseWriter, status int, v any) {
 
 // ── response types (spec §5) ──────────────────────────────────────────────────
 
-// fleetItem is one entry in the GET /api/elevators list (8 spec fields + risk_level).
+// fleetItem is one entry in the GET /api/elevators list (spec §5.1).
 type fleetItem struct {
 	ID                      int     `json:"id"`
 	Location                string  `json:"location"`
@@ -41,6 +41,7 @@ type fleetItem struct {
 	LicenseExpiry           *string `json:"license_expiry"`
 	LatestInspectionDate    *string `json:"latest_inspection_date"`
 	LatestInspectionOutcome *string `json:"latest_inspection_outcome"`
+	RiskLevel               *string `json:"risk_level"` // null when no prediction row exists
 }
 
 type listResponse struct {
@@ -119,6 +120,8 @@ type riskResponse struct {
 	ElevatorID       int                  `json:"elevator_id"`
 	PredictedOutcome string               `json:"predicted_outcome"`
 	Confidence       float64              `json:"confidence"`
+	RiskScore        jsonFloat            `json:"risk_score"` // P("Follow up") from predictions.csv
+	RiskLevel        string               `json:"risk_level"` // high / medium / low
 	ClassProbs       map[string]jsonFloat `json:"class_probabilities"`
 	OpenOrdersCount  int                  `json:"open_orders_count"`
 	MeanRiskScore    *float64             `json:"mean_risk_score"`
@@ -214,6 +217,11 @@ func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
 	items := make([]fleetItem, 0, end-start)
 	for _, id := range filtered[start:end] {
 		e := s.elevators[id]
+		var riskLevel *string
+		if pred, ok := s.predictions[e.ID]; ok {
+			rl := pred.RiskLevel
+			riskLevel = &rl
+		}
 		items = append(items, fleetItem{
 			ID:                      e.ID,
 			Location:                e.Location,
@@ -223,6 +231,7 @@ func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
 			LicenseExpiry:           e.LicenseExpiry,
 			LatestInspectionDate:    e.LatestInspectionDate,
 			LatestInspectionOutcome: e.LatestInspectionOutcome,
+			RiskLevel:               riskLevel,
 		})
 	}
 
@@ -364,6 +373,8 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		ElevatorID:       e.ID,
 		PredictedOutcome: pred.PredictedOutcome,
 		Confidence:       pred.Confidence,
+		RiskScore:        jsonFloat(pred.RiskScore),
+		RiskLevel:        pred.RiskLevel,
 		ClassProbs:       pred.ClassProbabilities,
 		OpenOrdersCount:  openCount,
 		MeanRiskScore:    meanRisk,
