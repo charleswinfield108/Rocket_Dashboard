@@ -1,69 +1,51 @@
 ---
-description: Platform conventions for Python/Flask/HTMX work in the platform/ directory. Auto-load when editing any file under platform/ — server.py, templates/, test_server.py, or the Go API in platform/api/.
+name: platform-conventions
+description: Platform-layer conventions for the Rocket Elevators dashboard. Covers Flask server startup, the spec-first dashboard workflow, and HTMX endpoint patterns. Apply whenever editing files in platform/, writing Flask endpoints, or modifying the dashboard spec.
+triggers:
+  - platform/
+  - "*.py"
+  - "*.html"
 ---
 
-# Platform Conventions
+# Platform Conventions — Rocket Elevators Dashboard
 
-Rules that apply when working in the `platform/` directory: the Python/Flask frontend server, HTMX templates, and the Go API service.
+## Flask Server Startup
 
----
+Start the server with:
 
-## Starting the Servers
-
-**Python/Flask frontend**
-```bash
+```
 python3 platform/server.py
 ```
-- Served at `http://localhost:5000`
-- Do **not** open `platform/templates/index.html` directly in a browser — the dashboard requires the Flask server to be running
 
-**Go API** *(added AND-104)*
-```bash
-cd platform/api && go run .
-```
-- Served at `http://localhost:8081` by default
-- Both servers can run simultaneously; they use different ports
+The dashboard is served at `http://localhost:5000`. Do **not** open `platform/templates/index.html` directly in a browser — it requires the Flask server to be running to serve HTMX endpoints and inject data.
 
----
+`server.py` is the sole entry point. `platform/templates/index.html` is the only dashboard template.
 
-## Dashboard Changes — Spec First
+## Dashboard Change Workflow (Spec-First)
 
-1. Edit `docs/dashboard_spec.md` first
-2. Then update `platform/templates/index.html`
-3. Never edit the HTML directly without a corresponding spec change
+All dashboard changes follow a two-step process:
 
----
+1. Edit `docs/dashboard_spec.md` — document the intended change in the spec first.
+2. Regenerate `platform/templates/index.html` from the spec.
 
-## HTMX Endpoints Return HTML Fragments
+**Never edit `platform/templates/index.html` directly.** Direct HTML edits drift from the spec and are overwritten the next time the page is regenerated.
 
-Flask endpoints consumed by HTMX return **HTML fragments**, not JSON.
+## HTMX Endpoints
 
-```python
-# Correct — returns a <tbody> fragment for HTMX to swap
-@app.route("/elevators")
-def elevators():
-    return render_template("_elevators_rows.html", data=rows)
+HTMX endpoints return **HTML fragments**, not JSON.
 
-# Wrong — HTMX endpoints must not return JSON
-@app.route("/elevators")
-def elevators():
-    return jsonify(rows)
-```
+- `/elevators` returns a `<tbody>` fragment for HTMX to swap into the table body.
+- Any new HTMX-driven endpoint must return a rendered template fragment via `render_template_string` or a partial template file.
+- The HTMX `hx-swap` target on the frontend determines where the fragment is inserted — match the fragment structure to what the swap target expects.
 
-The `/elevators` endpoint returns a `<tbody>` fragment for HTMX to swap into the page. JSON responses belong to the Go API on port 8081, not to the Python server.
+Do not return JSON from endpoints that HTMX will consume. HTMX swaps HTML; a JSON response will appear as raw text in the page.
 
----
+## Source Data Files
+
+Files under `data/` are source datasets — **do not modify them**. Any derived outputs (merged CSVs, processed files, generated assets) belong in `intelligence/` or `platform/assets/`, not in `data/`.
+
+If a new endpoint or pipeline needs a derived file, write it to the appropriate output directory and load from there — never overwrite or append to the source files in `data/`.
 
 ## Generated Data Files
 
-`data/predictions.csv` is a **generated artifact** produced by `intelligence/generate_predictions.ipynb`. Do not edit it manually. To update predictions, re-run the notebook and let it overwrite the file.
-
----
-
-## Go API Conventions *(AND-104)*
-
-- Module lives in `platform/api/`
-- Default port: `8081` (configurable via `PORT` environment variable)
-- All responses are `Content-Type: application/json`
-- CSV data is loaded into memory at startup — do not re-read files per request
-- Error responses follow the shape defined in `docs/api_spec.md`
+`data/predictions.csv` is a **GENERATED ARTIFACT**. It is produced by running `intelligence/generate_predictions.ipynb` (Restart Kernel and Run All) and must never be hand-edited. To change predictions, modify the notebook and regenerate.

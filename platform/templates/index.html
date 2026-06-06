@@ -124,6 +124,17 @@
 
       </div>
 
+      <!-- Fleet Health Panel (Component 3) -->
+      <div
+        hx-get="/fleet-health"
+        hx-trigger="load"
+        hx-swap="outerHTML">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-pulse">
+          <p class="text-xs font-semibold uppercase tracking-wide text-gray-300">Fleet Health</p>
+          <p class="text-xs text-gray-300 mt-2">Loading…</p>
+        </div>
+      </div>
+
       <!-- Table + Detail Panel -->
       <div class="flex gap-5 items-start">
 
@@ -209,6 +220,7 @@
                       Status <span>↕</span>
                     </button>
                   </th>
+                  <th class="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-400">Risk</th>
                   <th class="px-5 py-3 text-left">
                     <button id="sort-btn-license_expiry"
                         hx-get="/elevators"
@@ -247,6 +259,17 @@
         <style>#detail-panel:empty { width: 0; }</style>
 
       </div>
+      <!-- Alerts Section (Component 4) -->
+      <div
+        hx-get="/fleet-alerts"
+        hx-trigger="load"
+        hx-swap="outerHTML">
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-5 animate-pulse">
+          <p class="text-xs font-semibold uppercase tracking-wide text-gray-300">Alerts</p>
+          <p class="text-xs text-gray-300 mt-2">Loading…</p>
+        </div>
+      </div>
+
     </div>
   </main>
 

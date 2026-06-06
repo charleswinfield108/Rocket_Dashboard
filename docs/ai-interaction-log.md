@@ -1279,3 +1279,468 @@ The methodology report is written after the implementation, which means its "les
 
 ---
 
+## Entry 35 — 2026-05-30
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 1 — CLAUDE.md Audit and Platform Conventions Skill
+
+---
+
+**Prompts:**
+> I'm doing an audit of my CLAUDE.md and migrating platform-specific rules into a skill. Work through this in phases and PAUSE for my approval after Phase 1 before editing any files.
+
+> PHASE 1 — READ & REASON: Read CLAUDE.md in full. Extract every distinct rule — treat each as its own line item. For each rule, categorize into exactly one of three buckets (ALWAYS RELEVANT / MUST ALWAYS EXECUTE / SCOPED TO PLATFORM WORK) and justify in one sentence. Present as a table and stop. Flag anything ambiguous.
+
+> [Approved Phase 1 results]
+
+> PHASE 2 — AUDIT DOC: Create docs/claude_md_audit.md starting with a markdown header naming the task. List every rule with category and justification. Note this is a first-pass that will be refined as hooks are implemented.
+
+> PHASE 3 — CREATE THE SKILL: Create .claude/skills/platform-conventions/SKILL.md with the SCOPED TO PLATFORM WORK rules. Frontmatter must reference platform/, Python, HTMX. Do NOT set user-invocable: true. Under 500 lines.
+
+> PHASE 4 — TRIM CLAUDE.md: Remove every rule migrated into the skill. Leave ALWAYS RELEVANT and MUST ALWAYS EXECUTE rules in place. CLAUDE.md must end up shorter.
+
+> PHASE 5 — VERIFY: Run through the checklist and report pass/fail for each criterion.
+
+> [Confirmed checklist — all pass] Stage and commit the three deliverables in a single commit.
+
+**Prompting Technique:** Phased workflow with explicit approval gates — each phase is approved before the next begins and no files are edited until the analysis is confirmed
+
+**Why this technique:** This is the first time a CLAUDE.md rule has been migrated to a different mechanism. Making the analysis visible before any file is touched prevents committing a categorisation that seems reasonable in isolation but misses something on closer review. The approval gate after Phase 1 specifically caught a useful clarification: rules 1 and 6 (both describing `python3 platform/server.py`) overlapped and needed to be merged in the skill rather than duplicated.
+
+**Extension Mechanism Decision — Skill vs. CLAUDE.md:**
+Rules 3, 6, and 7 (spec-first dashboard workflow, Flask server startup, HTMX fragment pattern) moved from CLAUDE.md to the platform-conventions skill. The reason is scope: these rules are only relevant when editing `platform/` files. A developer working purely in the intelligence layer or on documentation does not need to load and process these conventions on every interaction. Keeping them in CLAUDE.md loads them universally — which adds noise without value outside the platform context. A skill that auto-loads when `platform/` files are open delivers the same guidance with better targeting.
+
+Rule 5 (never include `Co-Authored-By: Claude` in commit messages) was flagged as a **hook candidate** rather than a skill. The distinction: a skill is advisory text that can be ignored; a PreToolUse hook on git commands executes deterministically regardless of whether the instructions were read. For a rule like commit message format — where a single overlooked instance in hundreds of commits is a real risk — deterministic enforcement is the right mechanism. The rule stays in CLAUDE.md for now and will move to a hook in Task 4.
+
+**What Happened:**
+- 7 rules extracted from CLAUDE.md (including one embedded in the Directories section: `data/` — do not modify)
+- Categorisation: 2 ALWAYS RELEVANT, 1 MUST ALWAYS EXECUTE (hook candidate), 4 SCOPED TO PLATFORM WORK
+- Rules 1 and 6 merged into one entry in the skill (both referenced `python3 platform/server.py`)
+- CLAUDE.md trimmed from 31 → 28 lines; 3 platform-scoped rules removed, single pointer line added
+- Skill created at 69 lines; includes forward-looking Go API conventions and generated data file rule for later tasks
+- All 7 checklist items passed before commit
+
+**What I Would Change:**
+The phased prompting worked well but the approval gates could be tighter. In Phase 4, the first version of the trimmed CLAUDE.md ended up the same line count as the original (31 lines) because a new "Platform Conventions" pointer section offset the removed rules. A pre-commit line-count check built into the phase instructions ("confirm the output is shorter before reporting back") would have caught this without needing a second pass.
+
+---
+
+## Entry 38 — 2026-06-04
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 5 — Full-Stack Integration: API validation tooling and Python frontend proxy
+
+---
+
+**Prompts:**
+> Create a Claude Code subagent at `.claude/agents/api-validator.md` with three parts: ROLE DESCRIPTION, WORKFLOW (numbered steps, think-first-verdict-last), OUTPUT FORMAT (fixed report template). Do NOT touch the frontend yet.
+
+> Create a user-invocable skill at `.claude/skills/validate-api/SKILL.md`. Takes a single argument (endpoint path), delegates to api-validator, surfaces its report. Do not duplicate validation logic.
+
+> [/validate-api on each of the four endpoints — run serially, fix failures before moving on]
+
+> Think step by step before writing any code. STEP 1 — reason out the integration strategy (server-side proxy vs direct client-side calls). STEP 2 — implement. STEP 3 — handle Go API unavailability. STEP 4 — append AI Interaction Log entry.
+
+**Prompting Technique:** Multi-phase workflow with an explicit reasoning gate before implementation — STEP 1 forces a written comparison of the two strategies before any code is touched, so the implementation follows from reasoned justification rather than default choice.
+
+**Why this technique:** The integration strategy decision (server-side proxy vs. direct client-side calls) has architectural consequences that are hard to reverse once wired. Writing out the tradeoffs in STEP 1 made it explicit that Option B (direct browser calls) would break the HTMX architecture entirely — HTMX expects HTML fragments, not JSON, and the Go API is a pure JSON service. That reasoning would have been implicit if skipped; making it a named step forced it to be evaluated before a line of code was written.
+
+**Integration Strategy Decision — Server-side proxy:**
+
+Two options were evaluated:
+
+*Option A — Server-side proxy:* Flask receives the HTMX `GET /elevator/{id}` request, calls `http://localhost:8081/api/elevators/{id}` internally using the `requests` library, shapes the JSON into a Jinja2 HTML fragment, and returns HTML to the browser.
+
+*Option B — Direct client-side calls:* The browser / HTMX calls `http://localhost:8081` directly.
+
+**Option B was ruled out immediately:** HTMX is designed to swap server-rendered HTML fragments into the DOM. A direct browser call to the Go API returns JSON, which HTMX would inject as raw text — the detail panel would render garbled output. Making the Go API return HTML would violate its spec (pure JSON service, per `docs/api_spec.md`). Additionally, Option B requires CORS headers on the Go API (not implemented, not in spec), and places error handling in JavaScript event hooks rather than Python, where `requests.exceptions.RequestException` is one `except` clause.
+
+**Option A chosen.** The Flask server acts as a transparent proxy: it fetches JSON from the Go API, shapes it into Jinja2 HTML, and returns the fragment. This preserves the HTMX architecture (browser always receives HTML), requires no CORS changes, and centralises all error handling in Python.
+
+**What Happened:**
+
+*Validation tooling:*
+- `api-validator` subagent: three-part structure (role, 13-dimension workflow, fixed report template). Designed to work for any of the four endpoints without hardcoding endpoint-specific knowledge.
+- `validate-api` skill: user-invocable (`user-invocable: true`), delegates entirely to the subagent, surfaces its report verbatim.
+- Four validation runs:
+  - `GET /api/elevators` — initially DOES NOT CONFORM (Dimension 16: error message missing `got 9999`). Fixed with a two-branch limit check; re-ran → CONFORMS.
+  - `GET /api/elevators/{id}` — CONFORMS on first run.
+  - `GET /api/elevators/{id}/risk` — CONFORMS (503 is spec-correct pre-Task-6 behaviour).
+  - `GET /api/elevators/{id}/inspections` — initially DOES NOT CONFORM (Dimension 8: `risk_score` serialised as `22` not `22.0`). Fixed with a custom `jsonFloat` type + `MarshalJSON` method; re-ran → CONFORMS.
+
+*Frontend integration:*
+- `import requests as http_client` added; `GO_API = "http://localhost:8081"` constant added.
+- `elevator_detail` handler replaced: calls `GET /api/elevators/{id}` for basic info and `GET /api/elevators/{id}/inspections` for inspection history.
+- `incident.json` and `altered.json` remain as local reads — the Go API does not own incident or alteration detail records.
+- Task 6 hook left as commented-out block for `GET /api/elevators/{id}/risk`.
+- Error states: `RequestException` → `_unavailable_fragment()` with HTTP 503; 404 → `_not_found_fragment()` with HTTP 404; unexpected status → `_unavailable_fragment()` with HTTP 502.
+- Port conflict confirmed absent: Flask on 5000, Go API on 8081.
+
+*End-to-end verification (Prompt 5):*
+- Both servers started simultaneously: Go API on `:8081`, Flask on `:5000` — HTTP 200 on both, no port conflict.
+- Detail panel for elevator 10 returns HTTP 200 with all five expected sections (Elevator Detail, Inspections, Incidents, Alterations header).
+- Side-by-side comparison for elevator 10: `id`, `location`, `device_type`, `license_status`, `license_expiry`, and `alteration_count` in the Flask HTML fragment exactly match the raw Go API JSON response field-for-field.
+- Go API killed mid-session: Flask `/elevator/10` returned HTTP 503 with the amber "Service Unavailable" fragment — no crash, no stack trace, no raw exception bubbled to the browser.
+- Committed in two logical groups: `deb9d14` (validation tooling) and `a38e221` (frontend integration + conformance fixes + log entry).
+
+**Key Decision — What the API owns vs. what stays local:**
+The Go API owns elevator static detail (from `merged_elevator_data.csv`) and inspection history (from `inspection.csv` + `order.csv`). Incident and alteration *detail rows* (from `incident.json` and `altered.json`) are not exposed by any Go API endpoint. The integration replaces CSV reads for the data the API owns; the remaining local reads are retained because the alternative (reading those files directly in Python) is the only source available.
+
+**What I Would Change:**
+The `api-validator` subagent's Step 2 protocol hardcodes `elevator ID 10` as the happy-path test ID. A more robust subagent would first issue a `GET /api/elevators?limit=1` to discover a valid ID dynamically, so it doesn't depend on elevator 10 being present in any future dataset. This is a minor gap — elevator 10 exists in the current data — but it would be the first thing to change before running this validator against a different environment.
+
+---
+
+## Entry 36 — 2026-06-03
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 2 — REST API Specification (`docs/api_spec.md`)
+
+---
+
+**Prompts:**
+> Before writing anything, inventory the data this API will serve. List every CSV under data/ (and anywhere else CSVs live in this repo). For each file, report: filename and row count, full column headers, inferred type per column (string / int / float / date / bool), 2–3 real sample rows. Also flag any columns that act as IDs or foreign keys linking elevators to their inspections. Do NOT write the spec yet.
+
+> Create a new file docs/api_spec.md: a REST API specification for the Go backend service. This is a pure JSON service — it does not serve HTML. Base every field name and type on the CSV data you just inspected. Do not invent fields. [Full prompt with SDD structure, four endpoints, error response requirements, data sources mapping, and pre-publish checklist.]
+
+**Prompting Technique:** Explicit gate between data inspection and document authoring — the first prompt forbids writing the spec, forcing a grounded inventory before any field names are committed to
+
+**Why this technique:** API specs written without inspecting real data invent plausible-sounding field names that don't match the actual source columns. The gate enforces a two-step process: inspect first, specify second. The inventory revealed several things that would have been wrong in a naive spec — three different date formats across the CSVs requiring normalisation, the `under review` "Y"/"N" string needing boolean coercion, three columns containing only `"data redacted"` that should be omitted from all responses, and the fact that `Device Class` is always `"Elevators"` in the dataset (present in the spec but noted as having no filtering value). Without the inventory step, these would have been discovered during implementation rather than during spec review.
+
+**What Happened:**
+
+*Data inventory:*
+- Six CSVs profiled: `data/feature_matrix.csv` (143,181 rows, 96 cols), `data/inspection.csv` (143,181 rows, 9 cols), `data/license.csv` (45,383 rows, 11 cols), `data/merged_elevator_data.csv` (43,251 rows, 25 cols), `data/order.csv` (162,172 rows, 15 cols), `platform/elevator_fleet.csv` (43,297 rows, 4 cols).
+- `ElevatingDevicesNumber` (int64) confirmed as the shared join key across all five `data/` files. `platform/elevator_fleet.csv` uses the alias `elevator_id` for the same values.
+- `InspectionNumber` / `inspectionnumber` confirmed as the join key between `inspection.csv` and `order.csv`.
+- Date formats identified as inconsistent: `28-Apr-17` (license.csv), `1/10/2011` (inspection.csv), `2015-03-27` (merged/fleet), `3/5/2012 14:08` with timestamp (order.csv). Normalisation to ISO 8601 mandated in Constraints.
+- `BILLINGACCOUNT`, `LICENSEHOLDERACCOUNTNUMBER`, `Owner Account Number` contain `"data redacted"` — confirmed excluded from all response shapes.
+- `RISKSCORE` range confirmed as 0–20,316 (not 0–1); no normalisation in the API.
+- `outcome_class` in `feature_matrix.csv` has exactly 13 distinct values — these become the keys of `class_probabilities` in the `/risk` response.
+
+*Spec (`docs/api_spec.md`):*
+- Structured under all six SDD elements.
+- **Scope Boundaries decision — pagination:** included for `GET /api/elevators` (43,251 rows too large for a single mobile response); excluded for `/inspections` and `/risk` (per-elevator counts are bounded). Decision stated explicitly.
+- **Scope Boundaries decision — compliance orders:** not a top-level resource. Order data surfaces as nested arrays inside `/inspections` and as summary fields (`open_orders_count`, `mean_risk_score`) inside `/risk`.
+- **`/risk` 503 response:** distinguished from 404 so clients can tell "elevator not found" from "predictions pipeline hasn't run yet." Applies until Task 6 generates `predictions.csv`.
+- **`predictions.csv` forward schema defined:** 18 columns specified (join key, predicted class, confidence, 13 class-probability columns, model version, generated-at date) so Task 6 knows exactly what shape to produce.
+- Example responses built from real rows: elevator IDs 10, 1009, 10145 from the merged CSV; inspection numbers 3747366 and 3763443 with risk score 22.0 and status RESOLVED from order.csv.
+- Pre-publish checklist: all eight items pass.
+
+**Key Decision — 503 for missing predictions vs. 404:**
+Both 404 and 503 apply to the `/risk` endpoint, but for different conditions: 404 means the elevator ID is not in `merged_elevator_data.csv` (the elevator does not exist); 503 means the elevator exists but `predictions.csv` is not loaded or has no row for that ID. Conflating these into a single 404 would make it impossible for a client to distinguish "bad ID" from "predictions not ready." The 503 with `PREDICTIONS_UNAVAILABLE` gives the client actionable information and clearly signals a pipeline dependency rather than a client error.
+
+**What I Would Change:**
+The inspection example response for elevator 10 uses `service_request_number` values noted as "representative" — the inventory profiled only the first three rows of `inspection.csv` (elevator IDs 9948, 28588, 76833), so the exact `originatingservicerequestnumber` for elevator 10 was not in the sample. A targeted filter (`inspection.csv` rows where `ElevatingDevicesNumber == 10`) during the inventory step would have given exact values for the example response. The spec is correct structurally but the example would be tighter with real values at the row level for that elevator.
+
+---
+
+## Entry 37 — 2026-06-03
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 3 — Go API Server Implementation
+
+---
+
+**Prompts:**
+> STEP 1 — Read the contract. Open docs/api_spec.md and treat it as the source of truth. Then read the headers of the CSVs it references. For yourself, list the exact field names/types each endpoint must return so the JSON matches the spec precisely.
+
+> STEP 2 — Scaffold. Create platform/api/ and run go mod init. Use the Go standard library net/http with Go 1.22+ ServeMux routing. The server must: listen on a configurable port (default 8081), resolve the data directory configurably (env DATA_DIR), set Content-Type: application/json on EVERY response including errors.
+
+> STEP 3 — Implement the four endpoints, matching docs/api_spec.md exactly on field names. Load all data from the CSVs. Validate {id} and return 400 with a JSON error body for malformed input.
+
+> STEP 4 — Build and verify before committing. go build must succeed. Start the server and curl each endpoint. Paste the actual commands and responses. Confirm status codes and Content-Type headers. Fix and re-test anything that doesn't match the spec.
+
+> STEP 5 — Document and commit. Create platform/api/README.md beginning with the H1: # Task 3: Go API Implementation. Then commit only the Go project + README. Re-check every box before committing.
+
+**Prompting Technique:** Ordered steps with a mandatory verification gate — each step builds on the last; STEP 4 (verify all endpoints against the spec with actual curl output) must complete before STEP 5 (document and commit) begins. The spec is designated the single source of truth in STEP 1 before any code is written.
+
+**Why this technique:** Naming the spec as source of truth in the first prompt prevents the implementation from drifting — every field name, status code, and error body is checked against `docs/api_spec.md` rather than inferred from memory. The ordered steps enforce a strict build → verify → commit sequence, which caught the stray compiled binary before it was part of the canonical commit (the `api` binary was in the untracked list but was added by `git add platform/api`; a `.gitignore` added in STEP 2 would have prevented it).
+
+**What Happened:**
+
+*STEP 1 — Contract report:*
+- Cross-referenced `docs/api_spec.md` with live column headers from all three source CSVs. Produced a complete JSON key → CSV column → Go type mapping for all four endpoints before any code was written.
+- Four parsing hazards identified upfront: five column names with spaces (`Device Type`, `Device Class`, `under review`, `Owner Name`, `Owner Address`); three different date formats across the CSVs requiring separate Go parse layouts; NaN serialised as empty string by encoding/csv; join key casing mismatch (`InspectionNumber` vs `inspectionnumber`).
+
+*STEP 2 — Scaffold:*
+- Module path: `github.com/charleswinfield108/Rocket_Dashboard/platform/api`. Go 1.22.4, zero external dependencies.
+- `server` struct pattern chosen so handlers have access to config and loaded data via receiver methods — avoids global state without a dependency injection framework.
+- `jsonMiddleware` wraps the entire mux so `Content-Type: application/json; charset=utf-8` is set before any handler writes status or body, including error paths. `writeError` calls `w.WriteHeader(status)` then `json.Encode` — never `http.Error`, which would override the middleware-set Content-Type with `text/plain`.
+- Smoke test confirmed stubs returned 501 with correct Content-Type before implementation began.
+
+*STEP 3 — Implementation (three files):*
+- `data.go`: internal row types, `readCSV` helper, `colIdx` map for header lookup (handles column names with spaces), `parseDate` trying four layouts in order, `optStr`/`optInt` for empty-string-to-null coercion.
+- `data.go loadPredictions()`: non-fatal — file-not-found sets `predictionsLoaded = false`; the handler returns 503 at request time rather than crashing at startup.
+- `handlers.go`: `lookupElevator` shared helper checks merged CSV first so both `/inspections` and `/risk` return 404 (not 503) for unknown elevator IDs. `make([]orderItem, 0, ...)` used instead of `nil` so empty orders arrays marshal to `[]` not `null`. ISO 8601 sort of `LatestDate` strings works lexicographically.
+
+*STEP 4 — Verification (14 curl checks):*
+- All 14 checks passed against live server output. Confirmed: 8-field fleet items, 21-field detail, `under_review` as boolean, `license_expiry` normalised from `28-Apr-17` → `"2017-04-28"`, null fields for elevator 1009 (no alteration history), inspections descending by date, `"orders":[]` not `null` for inspections with no orders, 503/404 precedence on `/risk`, `Content-Type: application/json; charset=utf-8` on all 200/400/404/503 responses.
+- One fix needed post-verification: `go build ./...` had left a compiled `api` binary in `platform/api/`; `git add platform/api` picked it up. Resolved with `git rm --cached` and a `.gitignore` entry in a follow-up commit.
+
+*STEP 5 — README and commit:*
+- `platform/api/README.md` covers run commands (port, DATA_DIR), endpoint table, status code table, data sources table, project layout.
+- Committed as `feat: implement Go API server with four endpoints (Task 3)` (commit `51107a8`), followed immediately by `chore: untrack compiled binary, add platform/api/.gitignore` (commit `3ecb2fb`).
+
+**Key Decision — `loadPredictions` non-fatal at startup:**
+Making predictions loading non-fatal was a deliberate choice. The alternative — failing startup when `predictions.csv` is absent — would block the API from running for the entire period between Task 3 and Task 6. The spec explicitly says the endpoint returns 503 until the file is generated, which implies the server should be runnable without it. The approach also means the 503 message can tell clients exactly why predictions are unavailable and when the file will be generated, rather than preventing the server from starting at all.
+
+**What I Would Change:**
+A `.gitignore` containing `api` (the binary name) should have been created in STEP 2 alongside `go.mod` — before any `go build` was ever run. Adding it retroactively after the binary was committed required an extra cleanup commit. The binary name matches the directory name (`platform/api/`), which is a common Go pattern, so this is a predictable hazard that should have been addressed in the scaffold step.
+
+---
+
+## Entry 39 — 2026-06-05
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 6 — Pre-Compute and Serve Predictions (completion and validation)
+
+---
+
+**Prompts:**
+> What task and prompt are we on?
+
+> Has this been completed: Start by writing a markdown header for this work: '# Task 6: Pre-Compute and Serve Predictions'. Create/complete the notebook `intelligence/generate_predictions.ipynb`… [STEP 1–4 detailed specs] Do NOT save to disk yet — that's the next prompt, after validation.
+
+> Has this been completed: Before writing predictions.csv, add validation cells that ASSERT… [three assertions + validation summary + save prompt]
+
+> [/validate-api /api/elevators/10/risk] — first run with D9 float-serialisation failure; applied fix; re-ran → CONFORMS
+
+> [/validate-api /api/elevators/\<known-id\>/risk] — confirmation run → CONFORMS
+
+> [/validate-api /api/elevators] — DOES NOT CONFORM (D7: undocumented `risk_level` field)
+
+> Endpoint \<path\> failed on \<dimension\>. Show me the spec snippet, the predictions data for that id, and the Go handler, apply the minimal fix, then re-run /validate-api \<path\> and confirm it CONFORMS.
+
+> Update `.claude/skills/platform-conventions/SKILL.md`. Add a convention for generated data files… Keep the existing conventions intact — append, don't replace.
+
+> Commit in logical, separately-messaged commits: the prediction pipeline… the Go API changes… the updated platform-conventions skill.
+
+> Log the interaction. commit and push.
+
+**Prompting Technique:** Audit-before-continue — each completed prompt was verified with an explicit "Has this been completed?" question before moving on to live validation. The fix protocol for validator failures was templated: "Show me the spec snippet, the predictions data for that id, and the Go handler, apply the minimal fix, then re-run /validate-api and confirm it CONFORMS." This three-part structure (show evidence → fix → re-confirm) was applied consistently to both failures encountered in the session.
+
+**Why this technique:** Starting a resumed session with "Has this been completed?" questions is a low-cost way to surface scope drift from prior sessions — it forces an explicit audit against the original prompt text rather than assuming continuity. The templated fix protocol works because it front-loads evidence gathering (spec snippet + live data + handler code) before any code is written, so the fix addresses the actual mismatch rather than a paraphrase of it. Re-running the validator after each fix closes the loop and prevents compounding failures.
+
+**What Happened:**
+
+*Audit (prompts A and B):*
+- Prompt A (STEP 1–4, notebook creation): confirmed complete. One deliberate expansion — STEP 4 also produces `predicted_outcome`, `confidence`, and 13 `prob_*` columns beyond the originally specified 5-column schema, added in a later prompt to satisfy the API spec's `class_probabilities` requirement.
+- Prompt B (validation cells + save): confirmed complete. All three assertions implemented and passing. CSV saved with 20 columns (not the original 5), backward-compatible with the 5-column schema — the five original fields are present in their specified positions.
+
+*Float-serialisation fix (D9):*
+- `class_probabilities` entries with value 0.0 serialised as integer `0` in Go's `encoding/json`. Affected three keys: `"Fail Initial"`, `"Follow Up Initial"`, `"Passed"`.
+- Fix: changed `ClassProbabilities map[string]float64` to `map[string]jsonFloat` in both `predictionRow` (data.go) and `riskResponse` (handlers.go). Also updated the `make(map[string]float64, ...)` in `loadPredictions()` to `make(map[string]jsonFloat, ...)` with explicit `jsonFloat(...)` cast on each value.
+- `/validate-api /api/elevators/10/risk` re-run → CONFORMS (all 15 dimensions pass).
+
+*List endpoint conformance fix (D7):*
+- `/validate-api /api/elevators` → DOES NOT CONFORM: `risk_level` field present on every elevator element, not defined in §5.1 (which specifies exactly 8 fields).
+- The field had been explicitly added by a prior prompt ("Update `/api/elevators` list to include `risk_level` per item"), but the spec for that endpoint does not include it.
+- Fix: removed `RiskLevel *string` from `fleetItem` struct; removed the prediction-map join and `RiskLevel: riskLevel` from `handleListElevators`.
+- `/validate-api /api/elevators` re-run → CONFORMS (all 16 dimensions pass).
+
+*Skill and commits:*
+- `platform-conventions/SKILL.md`: "Generated Data Files" section appended; existing content unchanged.
+- Three commits: `8e5bba9` (notebook + CSV), `b316544` (Go API handler + list fix), `4427e2f` (skill update).
+
+**Key Decision — `jsonFloat` for map values:**
+Go's `encoding/json` marshals `float64(0.0)` as `0` — it only includes a decimal point when the value has a fractional component. Because `class_probabilities` values must be JSON numbers typed as floats (the spec requires them in [0.0, 1.0] and clients may use the decimal point to distinguish float from int), a custom `jsonFloat` type with a `MarshalJSON` method was introduced in Task 5 for scalar fields. Extending it to map values required changing the map's value type from `float64` to `jsonFloat` — Go's `encoding/json` calls `MarshalJSON` on each map value when the value type implements `json.Marshaler`.
+
+**Key Decision — `risk_level` removed from list endpoint:**
+The field was added deliberately in a prior prompt. When the spec flagged it as undocumented, the spec won the argument. `risk_level` is a derived prediction attribute — it belongs on `/risk`, where it appears as part of the prediction response. Surfacing it on the fleet list would create a second exposure of prediction data outside the `/risk` contract, which adds coupling without a spec-backed reason. The right fix for any future need is to update §5.1 of the spec first, then re-add the field.
+
+**What I Would Change:**
+The `risk_level` list-endpoint conflict arose because a prompt was implemented without checking the spec for that endpoint first. Running `/validate-api /api/elevators` immediately after the list handler was modified (rather than only at the end of the task) would have caught the extra field before it was committed. A better practice: treat `/validate-api` as a post-change gate after every handler modification, not just as a final end-of-task check.
+
+---
+
+## Entry 40 — 2026-06-05
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 7 — Fleet Health Feature
+
+---
+
+**Prompts:**
+> Start with a markdown header: "# Task 7: Fleet Health Feature". Create a user-invocable skill at `.claude/skills/new-endpoint/SKILL.md`... [full four-step workflow spec]
+
+> [/new-endpoint fleet-stats "Returns aggregate fleet statistics"] — with business requirements and four edge-case pre-questions
+
+> [/new-endpoint fleet-alerts "Returns elevators needing immediate attention"] — with business requirements and four join-decision pre-questions
+
+> Review what the new-endpoint skill produced for both fleet/stats and fleet/alerts... run /validate-api on both, spot-check data
+
+> Did we achieve this step? Reflect on friction, identify one CC extension, implement it, test it, document it.
+
+**Prompting Technique:** Phased delivery with a retrospective extension prompt — the main work (skill creation + two endpoints) was followed by a structured friction analysis requiring the model to identify the actual pain point before deciding on an extension mechanism. The extension prompt forced a three-way comparison (hook / skill / subagent) before implementation, preventing a default-to-skill choice without justification.
+
+**Why this technique:** Asking "what friction did you actually experience in this task specifically" before "what extension would help" prevents generic suggestions. The three-mechanism comparison forces a deliberate choice with articulated tradeoffs rather than defaulting to the most familiar pattern.
+
+**What Happened:**
+
+*new-endpoint skill:*
+- Created at `.claude/skills/new-endpoint/SKILL.md` with `user-invocable: true`, four-step workflow (SPEC UPDATE → CODE GENERATION → ROUTE REGISTRATION → VALIDATION).
+- Later updated to five steps after the data-profiler extension was implemented (STEP 0 added before spec).
+
+*fleet/stats endpoint:*
+- Four edge cases answered before coding: pass outcomes are 6 specific strings (not a binary column); unscored elevators excluded from risk-level counts but counted as `unscored`; denominator is all inspection records (each row = one unique InspectionNumber); predictions absent → `risk_levels: null`.
+- Handler written, validated → **FAIL on D11** (`unscored` count = 2297, expected 3429). Root cause: `len(s.predictions)` includes 1,132 prediction rows with IDs absent from `merged_elevator_data.csv`. Fixed with a join-based count (`for id := range s.elevators { if _, ok := s.predictions[id]; ok { scored++ } }`). Re-validated → **CONFORMS**.
+
+*fleet/alerts endpoint:*
+- Four join decisions answered before coding: join key is `ElevatingDevicesNumber` across all three sources; most-recent inspection by ISO 8601 lexicographic max of `LatestDate`; elevator with no inspection → skip; elevator with no prediction → skip.
+- Initial Python analysis predicted 144 alerts (wrong). Server returned 211. Root cause: Python compared raw M/D/YYYY date strings; Go server normalizes dates to ISO 8601 at load time. Correct answer is 211. Re-analyzed with normalized dates → confirmed.
+- Validated → **CONFORMS** (all 13 dimensions pass, 211 alert items, correctly sorted by risk_score descending).
+
+*data-profiler subagent:*
+- Implemented at `.claude/agents/data-profiler.md`.
+- Profiles: row counts, enum distributions, date-column format samples with ISO 8601 flag, and cross-file join coverage matrix.
+- Test run against fleet-alerts' three sources confirmed it would have caught both bugs before any code was written: `inspection.csv`'s `Latest_INSPECTION_Date` flagged `*** NOT ISO 8601 ***`; `predictions → merged` join matrix shows `len(merged) - len(predictions) = 2297 ← WRONG`, correct unscored = 3429.
+
+*Route path correction:*
+- Original routes were `/api/fleet-stats` and `/api/fleet-alerts` (hyphenated). Task spec required `/api/fleet/stats` and `/api/fleet/alerts` (slash-separated). Corrected in `main.go` and `docs/api_spec.md`.
+
+**Key Decision — Subagent over hook or skill for data profiling:**
+
+Three mechanisms were evaluated against the specific friction (bugs caused by unverified data assumptions):
+
+*Hook:* Fires on a tool event (pre-write, post-stop). Would need to trigger before writing a handler. Pre-write hooks run in the main context, cannot issue CSV analysis, and would fire on every file write regardless of relevance. Ruled out — too broad, too noisy, wrong timing.
+
+*Skill:* User-invocable on demand. Would require the developer to remember to call `/profile-data` before starting. Doesn't integrate into the new-endpoint workflow automatically — the bug was caused by not profiling, so making profiling optional defeats the purpose.
+
+*Subagent:* Autonomous, multi-step analysis worker with its own context. CSV profiling involves reading multiple 40-143k row files, computing distributions, resolving join keys, and comparing format patterns — genuinely multi-step work that benefits from isolation so it doesn't flood the main conversation with raw analysis output. Can be embedded as a mandatory STEP 0 in the new-endpoint skill, making it automatic rather than opt-in. Chosen.
+
+**What I Would Change:**
+The `data-profiler` subagent was implemented as a project-level agent at `.claude/agents/data-profiler.md`, but it wasn't available as a registered subagent type during the session in which it was created — it would only appear in new sessions. A better development practice: implement project agents at the start of a task session so they're available for that session's testing, rather than implementing them as part of the task they're meant to facilitate.
+
+---
+
+## Entry 41 — 2026-06-05 (Reflection)
+
+**Type:** Extension review — most valuable extension across AND-104 Tasks 5–8
+
+**Extension:** `api-validator` subagent (`.claude/agents/api-validator.md`)
+**Created in:** AND-104, Task 5
+
+---
+
+**The specific moment:**
+
+Task 6. The `/api/elevators/{id}/risk` handler had just been written and the Go server was running. I ran `/validate-api /api/elevators/10/risk`. The report came back DOES NOT CONFORM on one dimension: the field data type check. Three entries in `class_probabilities` — `"Fail Initial":0`, `"Follow Up Initial":0`, `"Passed":0` — had serialized as integer `0` in the raw JSON, not float `0.0`.
+
+The source code was type-correct: the handler used `map[string]float64`. The bug was in Go's `encoding/json`, which encodes `float64(0.0)` as `0` when the value has no fractional part — a serialization edge case invisible to code review. A downstream client using a strictly-typed JSON schema would have rejected the response for those three keys. The fix was a custom `jsonFloat` type with a `MarshalJSON` method that appends `.0` when the formatted string contains no decimal point.
+
+Without the validator, this bug would have shipped. It would only have surfaced when a consumer tried to deserialize the response and found integers where floats were expected — a bug whose failure mode is distant from the code that caused it.
+
+**Why the subagent mechanism was right for this specific value:**
+
+The validator's value came from two things that are only possible as a subagent:
+
+1. **Fixed dimensions checked regardless of developer intent.** The validator checks 13 named dimensions on every run, including "field data types — float fields serialize as float." When I implemented the handler, I was thinking about field presence, error codes, and status codes. The float serialization dimension was not on my mental checklist. A skill that I invoke would check whatever I remembered to ask for; a subagent that runs a fixed protocol checks what I forgot.
+
+2. **Inspection of the raw wire format, not the source.** The validator issues a live curl request and inspects the raw JSON bytes — `"Fail Initial":0` vs `"Fail Initial":0.0`. Code review of the Go source would see `float64` and consider it correct. Only a tool that actually calls the running server and reads the response can catch the gap between type declaration and serialization behavior.
+
+A hook would need a trigger event — there is no natural event for "after an API endpoint is deployed and serving traffic." A skill would require me to write out the dimension checks explicitly, which defeats the purpose of a fixed protocol. The subagent is the right mechanism because the value is in the autonomous execution of a predetermined, consistent workflow, not in interactive guidance.
+
+**How it was used across Tasks 5–8:**
+
+- Task 5: caught missing error message text (D16 on `/api/elevators`) and float serialization for `risk_score` in orders (D8 on `/api/elevators/{id}/inspections`). Both required code fixes before the session ended.
+- Task 6: caught the `class_probabilities` zero-value float bug described above; caught that `risk_level` was absent from the list endpoint after we removed it (D7 on `/api/elevators`).
+- Task 7: caught the `unscored` join-orphan count error (D11 on `/api/fleet/stats`) — `2297` reported vs `3429` correct.
+- Task 8: ran all six endpoints before frontend work began; all six CONFORMS. Frontend proceeded on a confirmed stable API surface.
+
+The validator turned the API surface into a reliable foundation that other components could depend on. Every time a handler was changed, a single invocation confirmed or refuted conformance with a specific, actionable failure description. That reliability compounded across tasks.
+
+---
+
+## Entry 42 — 2026-06-05 (Reflection)
+
+**Type:** Extension review — extension that should be redesigned
+
+**Extension:** `new-endpoint` skill (`.claude/skills/new-endpoint/SKILL.md`)
+**Created in:** AND-104, Task 7
+
+---
+
+**The specific friction moment:**
+
+Task 7. I invoked `/new-endpoint fleet-stats "Returns aggregate fleet statistics"`. The skill's first argument is described as "the endpoint path" and its example shows `fleet-stats`. I implemented the route as `GET /api/fleet-stats` (hyphenated) and registered it in `main.go`. The spec section was written with `**Path:** \`/api/fleet-stats\``.
+
+Two tasks later, in Task 8, the evaluation criteria listed `GET /api/fleet/stats` (slash-separated). Both routes had to be renamed in `main.go` and both spec sections had to be updated in `api_spec.md`. The same issue applied to `fleet-alerts` → `fleet/alerts`. This was a retroactive fix for a decision the skill made silently.
+
+The same mismatch happened again when the Task 8 review prompt said `/validate-api /api/fleet/stats` — the validator was pointed at a path that didn't exist yet because the route was still named `fleet-stats` at that point in the conversation.
+
+**The root cause:**
+
+The skill accepts a short name (`fleet-stats`) and constructs the full path by prepending `/api/`. It treats the argument as a kebab-case name, not a path. The user says `fleet-stats` when they mean `fleet/stats`, and the skill has no way to distinguish between a hyphen used as a word separator and a slash used as a path segment separator. The slot is syntactically underspecified for its semantic purpose.
+
+**What I would change — specifically:**
+
+Change the invocation format from:
+
+```
+/new-endpoint fleet-stats "Returns aggregate fleet statistics"
+```
+
+to:
+
+```
+/new-endpoint /api/fleet/stats "Returns aggregate fleet statistics"
+```
+
+The first argument becomes the literal full path, starting with `/api/`. STEP 1 of the workflow uses it verbatim as the `**Path:**` in the spec section and as the route string in `mux.HandleFunc(...)`. No interpretation, no construction. The skill's usage line would read:
+
+```
+Usage: /new-endpoint /api/<full/path> "<description>"
+```
+
+This is two extra characters per invocation in exchange for eliminating an entire class of ambiguity. Path structure is semantically meaningful — whether `fleet-stats` is one resource or `fleet/stats` is a sub-resource of `fleet` changes the API's resource model. That decision should be explicit in the invocation, not inferred from a name.
+
+**Secondary issue — STEP 0 availability:**
+
+The data-profiler subagent added as STEP 0 of the skill cannot be used in the same session it was created because project-level agents are only registered at session start. In Task 7, I tested the data-profiler by running its Python commands directly rather than through the subagent. The skill's STEP 0 therefore remained untested as an integrated workflow step. For any future extension embedded in a skill, the extension must be created in a prior session before it can be exercised through the skill that calls it.
+
+---
+
+## Entry 43 — 2026-06-05
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task:** AND-104, Task 8 — Hook refinement: protect-data-files.sh updated for predictions.csv
+
+---
+
+**What changed:**
+
+The `protect-data-files.sh` PreToolUse hook was written in Task 4 with a comment and error message that said `data/predictions.csv` "does not yet exist and may be created freely." By Task 8, `predictions.csv` had been generated by `intelligence/generate_predictions.ipynb` and committed to the repository. The hook's guard logic (`-f` test) already blocked writes to it correctly — the file existed on disk and the hook fires for any existing file in `data/`. What was stale was the documentation: the comment and the user-facing `permissionDecisionReason` message still described the old pre-Task-6 state.
+
+**The refinement:**
+
+Two changes to `.claude/hooks/protect-data-files.sh`:
+
+1. **Comment block** — replaced the "Exception: NEW files (e.g. data/predictions.csv, which does not yet exist)" note with an explicit statement that `predictions.csv` is now a committed generated artifact and must be regenerated via the notebook, not edited directly.
+
+2. **Error message** — removed the outdated "predictions.csv does not yet exist and may be created freely" clause from the `permissionDecisionReason` string. The new message reads: "data/predictions.csv is a generated artifact; to update it, re-run intelligence/generate_predictions.ipynb."
+
+**Why this is a meaningful refinement, not just a comment fix:**
+
+The error message is user-facing — it's what appears in Claude's transcript when a Write tool call is blocked. An outdated message telling the user that `predictions.csv` "may be created freely" would actively mislead anyone working after Task 6. The hook's blocking behaviour was already correct; the documentation of that behaviour was wrong in a way that could cause confusion.
+
+**Testing:**
+
+Three test cases verified against the updated hook:
+- `data/license.csv` → `deny` (source dataset, existed before Task 4) ✓
+- `data/predictions.csv` → `deny` (generated artifact, now protected with correct message) ✓
+- `data/new_analysis.csv` (does not exist) → allowed, exit 0 ✓
+
+**Why hook, not skill or subagent:**
+
+File protection is exactly the class of action that should be a hook rather than a skill or subagent. A skill requires deliberate invocation; a subagent requires being spawned. Neither prevents an accidental write. A `PreToolUse` hook fires on every Write/Edit/MultiEdit call before the tool executes, regardless of context or intent — it is the only mechanism that provides deterministic protection.
+
+---
+
