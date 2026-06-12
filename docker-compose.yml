@@ -37,7 +37,7 @@ services:
       db:
         condition: service_healthy   # waits for pg_isready to pass before starting
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8081/api/elevators?limit=1"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/api/health"]
       interval: 10s
       timeout: 5s
       retries: 3

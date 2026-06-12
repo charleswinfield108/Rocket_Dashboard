@@ -4,6 +4,7 @@
 # Go source + module
 !platform/api/*.go
 !platform/api/go.mod
+!platform/api/go.sum
 
 # CSV/JSON data files the API reads at startup
 !data/*.csv

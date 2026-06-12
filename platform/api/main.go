@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type config struct {
@@ -45,6 +47,7 @@ func parseConfig() config {
 
 type server struct {
 	cfg config
+	db  *pgxpool.Pool
 
 	// Loaded at startup from CSV files. All maps are keyed by ElevatingDevicesNumber
 	// (exposed as "id" in JSON), except ordersByInsp which is keyed by InspectionNumber.
@@ -59,6 +62,7 @@ type server struct {
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/elevators", s.handleListElevators)
 	mux.HandleFunc("GET /api/elevators/{id}", s.handleGetElevator)
 	mux.HandleFunc("GET /api/elevators/{id}/inspections", s.handleGetInspections)
@@ -84,7 +88,17 @@ func main() {
 		log.Fatalf("data directory not found at %q — set DATA_DIR to override", cfg.dataDir)
 	}
 
-	srv := &server{cfg: cfg}
+	dbCfg, err := parseDBConfig()
+	if err != nil {
+		log.Fatalf("DB configuration error: %v", err)
+	}
+	pool, err := openDB(dbCfg)
+	if err != nil {
+		log.Fatalf("cannot connect to database: %v", err)
+	}
+	defer pool.Close()
+
+	srv := &server{cfg: cfg, db: pool}
 	if err := srv.loadData(); err != nil {
 		log.Fatal(err)
 	}
