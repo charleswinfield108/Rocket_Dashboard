@@ -421,4 +421,355 @@ The table loads pre-sorted by License Expiry Date ascending — the most urgent 
 - Opening or closing the detail panel does not change the active sort column or direction
 - Sort, filters, and search all apply simultaneously in a single server request
 
+---
+
+## AND-105 Task 2: Relational Data Model
+
+This section documents the five-table relational schema that maps the Ontario elevator source files to a PostgreSQL database. The corresponding DDL lives at `platform/api/migrations/001_initial_schema.sql`.
+
+---
+
+### Source File Inventory
+
+Before any schema decisions were made, each source file was inspected for real column names, data types inferred from sampled values, null rates, and uniqueness. Findings relevant to design:
+
+**Shared join key (exact name per file):**
+
+| File | Join key column | Format |
+|------|----------------|--------|
+| `license.csv` | `ElevatingDevicesNumber` | integer string, e.g. `"10"` |
+| `inspection.csv` | `ElevatingDevicesNumber` | integer string |
+| `incident.json` | `elevating devices number` | integer |
+| `altered.json` | `Elevating Devices Number` | integer |
+| `predictions.csv` | `elevator_id` | prefixed string `"EL-00000010"` — strip `EL-` prefix, parse as integer |
+| `installed.json` | `Elevating devices number` | integer |
+
+All values join to the same numeric `ElevatingDevicesNumber` domain.
+
+**Redacted columns omitted from schema:**
+
+| Source | Column | Reason |
+|--------|--------|--------|
+| `license.csv` | `LICENSEHOLDERACCOUNTNUMBER` | 100% literal `"data redacted"` |
+| `license.csv` | `BILLINGACCOUNT` | 100% literal `"data redacted"` |
+| `installed.json` | `Owner Account Number` | 100% literal `"redacted"` |
+| `altered.json` | `Inspection number` | 100% NULL in 31,619 rows |
+| `altered.json` | `Alteration contractor name` | 100% NULL in 31,619 rows |
+
+**Orphan child records (child ID not present in `license.csv`):**
+
+| Child file | Orphan count | Total rows | % |
+|------------|-------------|------------|---|
+| `inspection.csv` | 145 | 40,954 | 0.35% |
+| `predictions.csv` | 145 | 40,954 | 0.35% |
+| `incident.json` | 1 | 2,446 | 0.04% |
+| `altered.json` | 9 | 31,619 | 0.03% |
+
+The 145 orphan inspections and 145 orphan predictions are the **same 145 elevator IDs** — consistent with the existing Go API behaviour that already skips these rows (the AND-104 join-orphan fix).
+
+---
+
+### Table Definitions
+
+#### `elevators`
+
+**Sources:** `data/license.csv` (identity + license columns) and `data/installed.json` (device attributes). Both files share the same join key; the `merged_elevator_data.csv` used by the current Go API is the natural join of these two files. Because device facts (type, class, status, owner) belong to the elevator entity, they are stored in this table rather than a separate one — placing them elsewhere would duplicate the entity.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `INTEGER` | `PRIMARY KEY` | `ElevatingDevicesNumber` — natural PK, see §PK Decisions |
+| `license_number` | `TEXT` | `NOT NULL UNIQUE` | `ElevatingDevicesLicenseNumber` |
+| `location` | `TEXT` | — | `LocationoftheElevatingDevice` (0.1% null) |
+| `license_status` | `TEXT` | `NOT NULL` | `LICENSESTATUS` — 11 distinct values |
+| `license_expiry` | `DATE` | — | `LICENSEEXPIRYDATE`; source format `dd-Mon-yy` (e.g. `28-Apr-17`) |
+| `license_holder` | `TEXT` | — | `LICENSEHOLDER` |
+| `license_holder_address` | `TEXT` | — | `LICENSEHOLDERADDRESS` |
+| `billing_customer` | `TEXT` | — | `BILLINGCUSTOMER` |
+| `billing_address` | `TEXT` | — | `BILLINGADDRESS` |
+| `device_type` | `TEXT` | — | `Device Type` from `installed.json` |
+| `device_class` | `TEXT` | — | `Device Class` from `installed.json` |
+| `device_status` | `TEXT` | — | `DeviceStatus` from `installed.json` |
+| `under_review` | `BOOLEAN` | — | `under review` — `'Y'` → `true`, `'N'` → `false` |
+| `owner_name` | `TEXT` | — | `Owner Name` from `installed.json` |
+| `owner_address` | `TEXT` | — | `Owner Address` from `installed.json` |
+
+---
+
+#### `inspections`
+
+**Source:** `data/inspection.csv`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `INTEGER` | `PRIMARY KEY` | `InspectionNumber` — natural PK |
+| `elevator_id` | `INTEGER` | `NOT NULL REFERENCES elevators(id)` | `ElevatingDevicesNumber` |
+| `service_request_number` | `TEXT` | — | `originatingservicerequestnumber` — not unique (multiple inspections share one SR) |
+| `customer` | `TEXT` | — | `InspectionCustomer` |
+| `inspection_type` | `TEXT` | — | `InspectionType` — 29 distinct values |
+| `location` | `TEXT` | — | `InspectionLocation` (0.1% null) |
+| `earliest_date` | `DATE` | — | `Earliest_INSPECTION_Date`; source format `M/D/YYYY` |
+| `latest_date` | `DATE` | — | `Latest_INSPECTION_Date`; source format `M/D/YYYY` |
+| `outcome` | `TEXT` | — | `InspectionOutcome` — 34 distinct values |
+
+---
+
+#### `incidents`
+
+**Source:** `data/incident.json`
+
+The 29 specific injury-type columns and 4 severity summary columns are stored as `SMALLINT` — source values are `0.0`, `1.0`, `2.0`, `3.0` (victim counts). All 33 columns share a 56.6% null rate as a group, indicating they originate from a separate data-entry form not completed for all incidents. They are kept as flat columns (not a sub-table) because the task specifies exactly five tables.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `INTEGER` | `PRIMARY KEY` | `Incident Number` — natural PK |
+| `elevator_id` | `INTEGER` | `NOT NULL REFERENCES elevators(id)` | `elevating devices number` |
+| `task_number` | `INTEGER` | — | `Task Number` (unique per incident) |
+| `category` | `TEXT` | — | `catagory of incident` [sic] — 2 values |
+| `incident_summary` | `TEXT` | — | `Incident Summary` — 22 values |
+| `date_of_occurrence` | `DATE` | — | `Date Of Occurrence`; format `dd-Mon-yy` |
+| `time_of_occurrence` | `TIME` | — | `Time of Occurrence`; format `H:MM:SS AM/PM` |
+| `creation_date` | `DATE` | — | `Creation Date`; format `dd-Mon-yy` |
+| `root_cause` | `TEXT` | — | `Specific Root Cause` (64.9% null) |
+| `narrative` | `TEXT` | — | `Reported occurrence narrative` |
+| `inspection_notes` | `TEXT` | — | `Summarized detail of Inspection and tests` (89.4% null) |
+| `inspector_conclusion` | `TEXT` | — | `Inspector's Conclusion` (89.4% null) |
+| `release` | `TEXT` | — | `release` — all rows = `'yes'` |
+| `severity_fatal` | `SMALLINT` | — | `fatal injury` |
+| `severity_permanent` | `SMALLINT` | — | `permanent (serious) injury` |
+| `severity_minor` | `SMALLINT` | — | `non-permanent (minor) injury` |
+| `severity_no_injury` | `SMALLINT` | — | `No Injury` |
+| `injury_fatal_victim` | `SMALLINT` | — | `Fatal Injury Victim` |
+| `injury_concussion` | `SMALLINT` | — | `Concussion Intracranial Inju` |
+| `injury_burns_severe` | `SMALLINT` | — | `Burns Severe` |
+| `injury_burns_minor` | `SMALLINT` | — | `Burns Minor` |
+| `injury_whiplash` | `SMALLINT` | — | `Whiplash` |
+| `injury_spinal` | `SMALLINT` | — | `Spinal Injury` |
+| `injury_amputation` | `SMALLINT` | — | `Amputation` |
+| `injury_deafness` | `SMALLINT` | — | `Injury Leading Deafness` |
+| `injury_heart_attack` | `SMALLINT` | — | `Heart Attack` |
+| `injury_fracture_major` | `SMALLINT` | — | `Fracture Major Bone` |
+| `injury_eye` | `SMALLINT` | — | `Eye Injury` |
+| `injury_electric_severe` | `SMALLINT` | — | `Electric Shock Severe` |
+| `injury_electric_minor` | `SMALLINT` | — | `Electric Shock Minor` |
+| `injury_dislocation` | `SMALLINT` | — | `Dislocation Limb` |
+| `injury_bruise_internal` | `SMALLINT` | — | `Bruise Hemorrhage Interna` |
+| `injury_exposure_carcinogen` | `SMALLINT` | — | `Exposure Carcinomatou Poison` |
+| `injury_swelling` | `SMALLINT` | — | `Swelling` |
+| `injury_sprained` | `SMALLINT` | — | `Sprained Twisted Joints Muscle` |
+| `injury_skin_infection` | `SMALLINT` | — | `Skin Infection Irritation` |
+| `injury_seizure` | `SMALLINT` | — | `Seizure` |
+| `injury_respiratory` | `SMALLINT` | — | `Respiratory Infection Irrita` |
+| `injury_poisoning` | `SMALLINT` | — | `Poisoning` |
+| `injury_other_internal` | `SMALLINT` | — | `Other Internal Injury` |
+| `injury_nausea` | `SMALLINT` | — | `Nausea Dizziness` |
+| `injury_laceration_superficial` | `SMALLINT` | — | `Laceration Superficial Cut` |
+| `injury_laceration_deep` | `SMALLINT` | — | `Laceration Deep Cut` |
+| `injury_fracture_minor` | `SMALLINT` | — | `Fracture Nose Fingers Toes` |
+| `injury_external_bruise` | `SMALLINT` | — | `External Bruise` |
+| `injury_aches_pains` | `SMALLINT` | — | `Aches Pains` |
+
+---
+
+#### `alterations`
+
+**Source:** `data/altered.json`
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `INTEGER` | `PRIMARY KEY` | `originating service request number` — natural PK |
+| `elevator_id` | `INTEGER` | `NOT NULL REFERENCES elevators(id)` | `Elevating Devices Number` |
+| `customer` | `TEXT` | — | `Alteration Customer` |
+| `summary` | `TEXT` | — | `Summary` |
+| `location` | `TEXT` | — | `Alteration  Location` (source key has extra space) |
+| `alteration_type` | `TEXT` | — | `Alteration Type` — 3 values |
+| `status` | `TEXT` | — | `Status of Alteration Request` — 12 values |
+| `billing_customer` | `TEXT` | — | `Billing Customer` |
+
+---
+
+#### `predictions`
+
+**Source:** `data/predictions.csv`
+
+One prediction row per elevator; `elevator_id` is simultaneously the natural identifier and the FK to `elevators`. This table's PK is also its only FK.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `elevator_id` | `INTEGER` | `PRIMARY KEY REFERENCES elevators(id)` | Strip `EL-` prefix from source value |
+| `predicted_outcome` | `TEXT` | `NOT NULL` | — |
+| `confidence` | `NUMERIC(8,6)` | `NOT NULL` | P(predicted_outcome) |
+| `risk_score` | `NUMERIC(8,6)` | `NOT NULL` | P("Follow up") |
+| `risk_level` | `TEXT` | `NOT NULL` | `high` / `medium` / `low` |
+| `model_version` | `TEXT` | `NOT NULL` | — |
+| `prediction_date` | `DATE` | `NOT NULL` | ISO 8601 in source |
+| `prob_all_orders_resolved` | `NUMERIC(8,6)` | — | — |
+| `prob_complete` | `NUMERIC(8,6)` | — | — |
+| `prob_dc_follow_up` | `NUMERIC(8,6)` | — | — |
+| `prob_fail_initial` | `NUMERIC(8,6)` | — | — |
+| `prob_follow_up` | `NUMERIC(8,6)` | — | — |
+| `prob_follow_up_initial` | `NUMERIC(8,6)` | — | — |
+| `prob_follow_up_major` | `NUMERIC(8,6)` | — | — |
+| `prob_follow_up_sub_major` | `NUMERIC(8,6)` | — | — |
+| `prob_other` | `NUMERIC(8,6)` | — | — |
+| `prob_passed` | `NUMERIC(8,6)` | — | — |
+| `prob_passed_major` | `NUMERIC(8,6)` | — | — |
+| `prob_shutdown` | `NUMERIC(8,6)` | — | — |
+| `prob_unable_to_inspect` | `NUMERIC(8,6)` | — | — |
+| `risk_explanation` | `TEXT` | — | **NULL now** — populated in a later task |
+
+---
+
+### Primary Key Decisions
+
+| Table | PK Choice | Evidence |
+|-------|-----------|----------|
+| `elevators` | Natural — `ElevatingDevicesNumber` | 45,383 rows, 45,383 unique, 0 nulls. Every other table's FK points here. Using it as a natural PK avoids storing a redundant surrogate while preserving the join-key semantics every file already uses. |
+| `inspections` | Natural — `InspectionNumber` | 143,181 rows, 143,181 unique, 0 nulls. |
+| `incidents` | Natural — `Incident Number` | 2,446 rows, 2,446 unique, 0 nulls. |
+| `alterations` | Natural — `originating service request number` | 31,619 rows, 31,619 unique, 0 nulls. |
+| `predictions` | Natural — `elevator_id` (stripped integer) | 40,954 rows, 40,954 unique. One prediction per elevator; the stripped integer value equals `ElevatingDevicesNumber`. Using a surrogate would add a column with no information gain since this is a 1:1 relationship keyed on elevator_id. |
+
+Surrogate keys (e.g. `BIGINT GENERATED ALWAYS AS IDENTITY`) were considered and rejected for all five tables because every source natural key was confirmed unique and non-null. Surrogate keys would add overhead without fixing any data quality problem — there are no duplicates to absorb.
+
+---
+
+### Relationships
+
+```
+elevators 1 ─────────── ∞ inspections   (via elevators.id = inspections.elevator_id)
+elevators 1 ─────────── ∞ incidents     (via elevators.id = incidents.elevator_id)
+elevators 1 ─────────── ∞ alterations   (via elevators.id = alterations.elevator_id)
+elevators 1 ─────────── 0..1 predictions (via elevators.id = predictions.elevator_id)
+```
+
+**Cardinality:**
+- One elevator can have many inspections (median ~3, range 0–hundreds).
+- One elevator can have many incidents (most have 0; a few have multiple).
+- One elevator can have many alterations.
+- One elevator has at most one prediction row (predictions.csv has exactly one row per elevator).
+
+**FK policy: STRICT + filter-on-load**
+
+All four child tables use `REFERENCES elevators(id) ON DELETE RESTRICT`.
+
+*Why strict, not deferred or nullable FK:*
+The database should enforce referential integrity — a child record with no parent elevator is a data quality problem, not a valid state. Making FK nullable would allow it silently.
+
+*Why RESTRICT, not CASCADE:*
+Deleting an elevator record should not silently remove its entire inspection, incident, and alteration history. Preventing the delete until children are removed first forces an explicit decision. In a production workflow, elevator deactivation would be modeled as a status change (`license_status`), not a row delete.
+
+*Handling orphans at load time:*
+The 145 inspection/prediction orphans, 1 incident orphan, and 9 alteration orphans will be filtered during data migration with:
+```sql
+INSERT INTO inspections
+  SELECT ... FROM staging_inspections
+  WHERE elevator_id IN (SELECT id FROM elevators);
+```
+This is intentional data loss of less than 0.35% of child rows. The alternative — inserting orphan parent stubs into `elevators` — would pollute the elevator table with records that have no license data. The filter approach is consistent with the existing Go API behaviour, which already skips these rows.
+
+---
+
+### Source-to-Column Mappings
+
+#### elevators
+
+| Source file | Source column | DB column | Transformation |
+|-------------|--------------|-----------|----------------|
+| `license.csv` | `ElevatingDevicesNumber` | `id` | String → INTEGER |
+| `license.csv` | `ElevatingDevicesLicenseNumber` | `license_number` | No transform |
+| `license.csv` | `LocationoftheElevatingDevice` | `location` | No transform |
+| `license.csv` | `LICENSESTATUS` | `license_status` | No transform |
+| `license.csv` | `LICENSEEXPIRYDATE` | `license_expiry` | `dd-Mon-yy` string → DATE (e.g. `28-Apr-17` → `2017-04-28`) |
+| `license.csv` | `LICENSEHOLDER` | `license_holder` | No transform |
+| `license.csv` | `LICENSEHOLDERADDRESS` | `license_holder_address` | No transform |
+| `license.csv` | `BILLINGCUSTOMER` | `billing_customer` | No transform |
+| `license.csv` | `BILLINGADDRESS` | `billing_address` | No transform |
+| `installed.json` | `Device Type` | `device_type` | No transform |
+| `installed.json` | `Device Class` | `device_class` | No transform |
+| `installed.json` | `DeviceStatus` | `device_status` | No transform |
+| `installed.json` | `under review` | `under_review` | `'Y'` → `true`, `'N'` → `false` |
+| `installed.json` | `Owner Name` | `owner_name` | No transform |
+| `installed.json` | `Owner Address` | `owner_address` | No transform |
+
+#### inspections
+
+| Source column | DB column | Transformation |
+|--------------|-----------|----------------|
+| `InspectionNumber` | `id` | String → INTEGER |
+| `ElevatingDevicesNumber` | `elevator_id` | String → INTEGER |
+| `originatingservicerequestnumber` | `service_request_number` | No transform |
+| `InspectionCustomer` | `customer` | No transform |
+| `InspectionType` | `inspection_type` | No transform |
+| `InspectionLocation` | `location` | No transform |
+| `Earliest_INSPECTION_Date` | `earliest_date` | `M/D/YYYY` → DATE (e.g. `1/10/2011` → `2011-01-10`) |
+| `Latest_INSPECTION_Date` | `latest_date` | `M/D/YYYY` → DATE |
+| `InspectionOutcome` | `outcome` | No transform |
+
+#### incidents
+
+| Source key | DB column | Transformation |
+|-----------|-----------|----------------|
+| `Incident Number` | `id` | INTEGER (already int in JSON) |
+| `elevating devices number` | `elevator_id` | INTEGER (already int) |
+| `Task Number` | `task_number` | INTEGER |
+| `catagory of incident` | `category` | No transform (preserve source typo in data; column name is correct) |
+| `Incident Summary` | `incident_summary` | No transform |
+| `Date Of Occurrence` | `date_of_occurrence` | `dd-Mon-yy` → DATE |
+| `Time of Occurrence` | `time_of_occurrence` | `H:MM:SS AM/PM` → TIME |
+| `Creation Date` | `creation_date` | `dd-Mon-yy` → DATE |
+| `Specific Root Cause` | `root_cause` | No transform |
+| `Reported occurrence narrative` | `narrative` | No transform |
+| `Summarized detail of Inspection and tests` | `inspection_notes` | No transform |
+| `Inspector's Conclusion` | `inspector_conclusion` | No transform |
+| `release` | `release` | No transform |
+| `fatal injury` | `severity_fatal` | `float` → SMALLINT (cast `1.0` → `1`, NULL → NULL) |
+| `permanent (serious) injury` | `severity_permanent` | float → SMALLINT |
+| `non-permanent (minor) injury` | `severity_minor` | float → SMALLINT |
+| `No Injury` | `severity_no_injury` | float → SMALLINT |
+| `Fatal Injury Victim` … `Aches Pains` (29 cols) | `injury_fatal_victim` … `injury_aches_pains` | float → SMALLINT; snake_case rename |
+
+#### alterations
+
+| Source key | DB column | Transformation |
+|-----------|-----------|----------------|
+| `originating service request number` | `id` | INTEGER (already int) |
+| `Elevating Devices Number` | `elevator_id` | INTEGER (already int) |
+| `Alteration Customer` | `customer` | No transform |
+| `Summary` | `summary` | No transform |
+| `Alteration  Location` (extra space) | `location` | Strip extra whitespace from key name during load |
+| `Alteration Type` | `alteration_type` | No transform |
+| `Status of Alteration Request` | `status` | No transform |
+| `Billing Customer` | `billing_customer` | No transform |
+
+#### predictions
+
+| Source column | DB column | Transformation |
+|--------------|-----------|----------------|
+| `elevator_id` (`EL-XXXXXXXX`) | `elevator_id` | Strip `EL-` prefix, parse as INTEGER |
+| `predicted_outcome` | `predicted_outcome` | No transform |
+| `confidence` | `confidence` | String → NUMERIC(8,6) |
+| `risk_score` | `risk_score` | String → NUMERIC(8,6) |
+| `risk_level` | `risk_level` | No transform |
+| `model_version` | `model_version` | No transform |
+| `prediction_date` | `prediction_date` | ISO 8601 string → DATE (already `YYYY-MM-DD`) |
+| `prob_all_orders_resolved` … `prob_unable_to_inspect` (13 cols) | same names | String → NUMERIC(8,6) |
+| *(no source column)* | `risk_explanation` | Insert as NULL |
+
+---
+
+### Indexes
+
+Indexes are justified by actual query patterns found in `platform/api/handlers.go`:
+
+| Index | Justification |
+|-------|--------------|
+| `inspections(elevator_id)` | FK column; `handleGetInspections` fetches all rows for one elevator |
+| `inspections(elevator_id, latest_date DESC)` | Covers the "most recent inspection" sort in `handleGetInspections` |
+| `inspections(outcome)` | `handleFleetStats` groups all inspections by outcome for pass-rate calculation |
+| `incidents(elevator_id)` | FK column |
+| `alterations(elevator_id)` | FK column |
+| `elevators(license_status)` | `handleListElevators` filters by `status` query parameter |
+| `predictions(risk_level)` | `handleFleetAlerts` filters `WHERE risk_level = 'high'` |
+| `predictions(risk_score DESC)` | `handleFleetAlerts` sorts results descending by risk score |
+
 
