@@ -1744,3 +1744,48 @@ File protection is exactly the class of action that should be a hook rather than
 
 ---
 
+## Entry 44 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+## AND-105 Task 3: ETL Migration — Data Transformations and Code Walkthrough
+
+---
+
+**Prompt (paraphrased):**
+> Write a Python ETL script that loads five source files into PostgreSQL. Apply all transformations from the Task 2 spec mapping. Handle dates, NULLs, orphan rows, and idempotency. Run it against the database and confirm row counts and re-run stability.
+
+---
+
+**What the script does — transformations:**
+
+*Date parsing.* Every date column uses a dedicated helper (`parse_date_dmy`, `parse_date_mdy`, `parse_date_iso`) that calls `datetime.strptime` with the format string confirmed in the Step 1 recon (`%d-%b-%y` for `dd-Mon-yy`, `%m/%d/%Y` for `M/D/YYYY`, `%I:%M:%S %p` for `H:MM:SS AM/PM`). Each helper returns a Python `datetime.date` (or `datetime.time`) object — psycopg2 serialises these as `DATE`/`TIME` literals on the wire, so PostgreSQL stores them as the correct type rather than a text string. A parse failure returns `None`, which psycopg2 sends as SQL `NULL`.
+
+*ON CONFLICT handling.* Every table uses `INSERT ... ON CONFLICT (pk_col) DO NOTHING`. The conflict target is the table's natural PK (`id` for four tables, `elevator_id` for predictions). This is safe because the Step 1 recon confirmed every source natural key is unique within its file — there are no source-side duplicates that would silently disappear into a conflict. To measure how many rows were actually new vs. already present, the script queries `COUNT(*)` before and after the bulk insert; the difference is `inserted` and the remainder is `conflict_skips`. On re-run, every row hits `ON CONFLICT` and is skipped, so `inserted = 0` and row counts are unchanged — the idempotency property the task requires.
+
+*JSON key extraction.* The JSON files are flat lists (no nesting or arrays). Keys are accessed via `r.get("key")` where the key string must match the source exactly, including unusual characters: `"Inspector's Conclusion"` contains an apostrophe (handled normally by Python string literals), and `"Alteration  Location"` has a double space (confirmed in Step 1 recon; the string literal in the script contains two spaces verbatim). Missing keys return `None` from `.get()`, which the `opt_str`/`opt_int`/`opt_float` helpers coerce to `None` → SQL `NULL`.
+
+*NULL handling.* Four helper functions centralise the coercion: `opt_str` strips whitespace and returns `None` for blank strings; `opt_int`/`opt_float` return `None` for `None` or unparseable input; `to_smallint` converts the incident injury floats (`0.0`, `1.0`, `2.0`, `3.0`) to `int` and passes `None` through unchanged. Any `None` in the tuple psycopg2 sends to PostgreSQL becomes a SQL `NULL`. Rows missing a `NOT NULL` column (e.g. `id`, `elevator_id`, `license_status`) are caught before building the tuple, logged to `stderr`, and added to the `skipped` counter rather than letting an `IntegrityError` abort the batch.
+
+*Orphan handling.* After `load_elevators` commits, each child loader calls `_get_elevator_ids(conn)` to fetch the set of integer elevator IDs now in the database. Any source row whose `elevator_id` is not in that set is logged and counted as an orphan skip — the FK violation is never sent to Postgres at all. The Step 1 recon predicted 195/1/9/145 orphan rows across the four child tables; the actual run produced exactly those counts, confirming the pre-filter logic and the recon counts.
+
+*Incident injury columns.* The 33 injury indicator columns (4 severity summaries + 29 specific types) are defined as `_INCIDENT_INJURY_MAP`, a module-level tuple of `(source_key, db_column)` pairs. The INSERT column list is built by joining the `db` side; the row tuple unpacks `*(to_smallint(r.get(src)) for src, _ in ...)` in the same iteration order. This guarantees the column list and tuple positions can never drift apart — changing the mapping constant updates both simultaneously.
+
+---
+
+**What I learned from reading the generated code:**
+
+`execute_values` from `psycopg2.extras` sends the entire batch in a single `INSERT ... VALUES (row1), (row2), ...` statement rather than one statement per row. The `page_size` parameter controls how many rows go into each statement — 1000 for most tables, 500 for incidents (which has 46 columns per row). The performance difference vs. row-by-row `execute()` is substantial: the entire 263k-row load finished in under 17 seconds.
+
+`cur.rowcount` after `execute_values` reflects only the last batch's affected count, not the total. This is why the script uses before/after `COUNT(*)` snapshots instead — it's the only reliable way to count total inserts across all batches when using `ON CONFLICT DO NOTHING`.
+
+The bootstrap_schema idempotency guard works by checking `pg_tables` for the `elevators` table before running the SQL file, because the DDL uses plain `CREATE TABLE` (not `IF NOT EXISTS`). Running the SQL twice without this guard would throw a `DuplicateTable` error and roll back. Checking for `elevators` as the sentinel is safe because all five tables were created in a single transaction — if `elevators` exists, all tables do.
+
+---
+
+**What I would change next time:**
+
+The `skipped` counter in the summary conflates two different kinds of skip: parse/validation failures (bad source data) and orphan skips (known FK exclusions). For a production ETL these should be reported separately so operations can distinguish data quality issues from expected exclusions. A `{"inserted": n, "parse_errors": n, "orphans": n, "conflicts": n}` breakdown per table would be cleaner than a single `skipped` number.
+
+---
+
