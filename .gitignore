@@ -1,2 +1,12 @@
 Requirements/
 requirements/
+
+# Local environment — never commit real credentials
+.env
+
+# Compiled binaries
+platform/api/api_server
+
+# Python bytecode caches
+**/__pycache__/
+*.pyc

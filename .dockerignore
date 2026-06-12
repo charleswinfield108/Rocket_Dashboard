@@ -1,0 +1,10 @@
+# Exclude everything by default, then whitelist what the build actually needs.
+**
+
+# Go source + module
+!platform/api/*.go
+!platform/api/go.mod
+
+# CSV/JSON data files the API reads at startup
+!data/*.csv
+!data/*.json
