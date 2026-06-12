@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ── error type ────────────────────────────────────────────────────────────────
@@ -327,6 +330,8 @@ func (s *server) handleGetInspections(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/elevators/{id}/risk
+// Predictions come from the database. Orders (open_orders_count, mean_risk_score)
+// still come from in-memory order.csv data — order.csv is not in the DB schema.
 func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	// 400/404 first — unknown elevator is never a predictions problem.
 	e, ok := s.lookupElevator(w, r)
@@ -334,15 +339,81 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.predictionsLoaded {
-		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-			"predictions are not yet available; predictions.csv will be generated in Task 6")
-		return
-	}
-	pred, found := s.predictions[e.ID]
-	if !found {
-		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-			"no prediction row available for elevator "+strconv.Itoa(e.ID))
+	const q = `
+SELECT
+    predicted_outcome,
+    confidence::float8,
+    risk_score::float8,
+    risk_level,
+    model_version,
+    TO_CHAR(prediction_date, 'YYYY-MM-DD')  AS as_of_date,
+    prob_all_orders_resolved::float8,
+    prob_complete::float8,
+    prob_dc_follow_up::float8,
+    prob_fail_initial::float8,
+    prob_follow_up::float8,
+    prob_follow_up_initial::float8,
+    prob_follow_up_major::float8,
+    prob_follow_up_sub_major::float8,
+    prob_other::float8,
+    prob_passed::float8,
+    prob_passed_major::float8,
+    prob_shutdown::float8,
+    prob_unable_to_inspect::float8
+FROM predictions
+WHERE elevator_id = $1`
+
+	var (
+		predictedOutcome  string
+		confidence        float64
+		riskScore         float64
+		riskLevel         string
+		modelVersion      string
+		asOfDate          string
+		pAllOrders        float64
+		pComplete         float64
+		pDCFollowUp       float64
+		pFailInitial      float64
+		pFollowUp         float64
+		pFollowUpInitial  float64
+		pFollowUpMajor    float64
+		pFollowUpSubMajor float64
+		pOther            float64
+		pPassed           float64
+		pPassedMajor      float64
+		pShutdown         float64
+		pUnableToInspect  float64
+	)
+
+	err := s.db.QueryRow(r.Context(), q, e.ID).Scan(
+		&predictedOutcome,
+		&confidence,
+		&riskScore,
+		&riskLevel,
+		&modelVersion,
+		&asOfDate,
+		&pAllOrders,
+		&pComplete,
+		&pDCFollowUp,
+		&pFailInitial,
+		&pFollowUp,
+		&pFollowUpInitial,
+		&pFollowUpMajor,
+		&pFollowUpSubMajor,
+		&pOther,
+		&pPassed,
+		&pPassedMajor,
+		&pShutdown,
+		&pUnableToInspect,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
+				"no prediction row available for elevator "+strconv.Itoa(e.ID))
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query predictions: "+err.Error())
 		return
 	}
 
@@ -371,15 +442,29 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, riskResponse{
 		ElevatorID:       e.ID,
-		PredictedOutcome: pred.PredictedOutcome,
-		Confidence:       pred.Confidence,
-		RiskScore:        jsonFloat(pred.RiskScore),
-		RiskLevel:        pred.RiskLevel,
-		ClassProbs:       pred.ClassProbabilities,
-		OpenOrdersCount:  openCount,
-		MeanRiskScore:    meanRisk,
-		ModelVersion:     pred.ModelVersion,
-		AsOfDate:         pred.AsOfDate,
+		PredictedOutcome: predictedOutcome,
+		Confidence:       confidence,
+		RiskScore:        jsonFloat(riskScore),
+		RiskLevel:        riskLevel,
+		ClassProbs: map[string]jsonFloat{
+			"All Orders Resolved": jsonFloat(pAllOrders),
+			"Complete":            jsonFloat(pComplete),
+			"DC Follow up":        jsonFloat(pDCFollowUp),
+			"Fail Initial":        jsonFloat(pFailInitial),
+			"Follow Up Initial":   jsonFloat(pFollowUpInitial),
+			"Follow up":           jsonFloat(pFollowUp),
+			"Follow up Major":     jsonFloat(pFollowUpMajor),
+			"Follow up Sub Major": jsonFloat(pFollowUpSubMajor),
+			"Other":               jsonFloat(pOther),
+			"Passed":              jsonFloat(pPassed),
+			"Passed Major":        jsonFloat(pPassedMajor),
+			"Shutdown":            jsonFloat(pShutdown),
+			"Unable to Inspect":   jsonFloat(pUnableToInspect),
+		},
+		OpenOrdersCount: openCount,
+		MeanRiskScore:   meanRisk,
+		ModelVersion:    modelVersion,
+		AsOfDate:        asOfDate,
 	})
 }
 
