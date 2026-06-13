@@ -145,20 +145,27 @@ func (s *server) parseID(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return id, true
 }
 
-// lookupElevator validates {id} and confirms it exists in merged_elevator_data.csv.
-// On failure it writes 400 or 404 and returns (nil, false).
-func (s *server) lookupElevator(w http.ResponseWriter, r *http.Request) (*elevatorRow, bool) {
+// lookupElevator validates {id} and confirms the elevator exists in the DB.
+// Returns (id, true) on success; writes 400/404 and returns (0, false) on failure.
+func (s *server) lookupElevator(w http.ResponseWriter, r *http.Request) (int, bool) {
 	id, ok := s.parseID(w, r)
 	if !ok {
-		return nil, false
+		return 0, false
 	}
-	e, found := s.elevators[id]
-	if !found {
+	var exists bool
+	if err := s.db.QueryRow(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM elevators WHERE id = $1)`, id,
+	).Scan(&exists); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to look up elevator: "+err.Error())
+		return 0, false
+	}
+	if !exists {
 		s.writeError(w, http.StatusNotFound, "ELEVATOR_NOT_FOUND",
 			"no elevator found with id "+strconv.Itoa(id))
-		return nil, false
+		return 0, false
 	}
-	return e, true
+	return id, true
 }
 
 // parseQueryInt parses an optional query-string integer, returning def when empty.
@@ -294,7 +301,7 @@ LIMIT $2 OFFSET $3`
 // All 21 fields come from the DB: elevators table plus three LATERAL subqueries
 // for alteration count, latest alteration, and latest inspection.
 func (s *server) handleGetElevator(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
@@ -345,7 +352,6 @@ LEFT JOIN LATERAL (
 WHERE e.id = $1`
 
 	var (
-		id                      int
 		location                string
 		deviceType              string
 		deviceClass             string
@@ -368,7 +374,7 @@ WHERE e.id = $1`
 		latestInspectionOutcome *string
 	)
 
-	err := s.db.QueryRow(r.Context(), q, e.ID).Scan(
+	err := s.db.QueryRow(r.Context(), q, id).Scan(
 		&id,
 		&location,
 		&deviceType,
@@ -394,7 +400,7 @@ WHERE e.id = $1`
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			s.writeError(w, http.StatusNotFound, "ELEVATOR_NOT_FOUND",
-				"no elevator found with id "+strconv.Itoa(e.ID))
+				"no elevator found with id "+strconv.Itoa(id))
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -431,7 +437,7 @@ WHERE e.id = $1`
 // Inspections come from the database. Orders embedded in each inspection
 // still come from in-memory order.csv data — order.csv is not in the DB schema.
 func (s *server) handleGetInspections(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
@@ -450,7 +456,7 @@ FROM inspections i
 WHERE i.elevator_id = $1
 ORDER BY i.latest_date DESC NULLS LAST`
 
-	rows, err := s.db.Query(r.Context(), q, e.ID)
+	rows, err := s.db.Query(r.Context(), q, id)
 	if err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"failed to query inspections: "+err.Error())
@@ -510,7 +516,7 @@ ORDER BY i.latest_date DESC NULLS LAST`
 	}
 
 	s.writeJSON(w, http.StatusOK, inspectionsResponse{
-		ElevatorID:  e.ID,
+		ElevatorID:  id,
 		Count:       len(items),
 		Inspections: items,
 	})
@@ -521,7 +527,7 @@ ORDER BY i.latest_date DESC NULLS LAST`
 // still come from in-memory order.csv data — order.csv is not in the DB schema.
 func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	// 400/404 first — unknown elevator is never a predictions problem.
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
@@ -572,7 +578,7 @@ WHERE elevator_id = $1`
 		pUnableToInspect  float64
 	)
 
-	err := s.db.QueryRow(r.Context(), q, e.ID).Scan(
+	err := s.db.QueryRow(r.Context(), q, id).Scan(
 		&predictedOutcome,
 		&confidence,
 		&riskScore,
@@ -596,7 +602,7 @@ WHERE elevator_id = $1`
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-				"no prediction row available for elevator "+strconv.Itoa(e.ID))
+				"no prediction row available for elevator "+strconv.Itoa(id))
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
@@ -608,7 +614,7 @@ WHERE elevator_id = $1`
 	// mean_risk_score: mean over orders that have a non-empty RISKSCORE cell only;
 	// empty cells must not contribute to the denominator (they coerce to 0.0 and
 	// dilute the mean — elevator 10 has 7 empty out of 24 rows).
-	orders := s.ordersByElev[e.ID]
+	orders := s.ordersByElev[id]
 	openCount := 0
 	var riskSum float64
 	var riskCount int
@@ -628,7 +634,7 @@ WHERE elevator_id = $1`
 	}
 
 	s.writeJSON(w, http.StatusOK, riskResponse{
-		ElevatorID:       e.ID,
+		ElevatorID:       id,
 		PredictedOutcome: predictedOutcome,
 		Confidence:       confidence,
 		RiskScore:        jsonFloat(riskScore),
@@ -670,16 +676,6 @@ type fleetStatsResponse struct {
 	TotalInspections   int              `json:"total_inspections"`
 	RiskLevels         *riskLevelCounts `json:"risk_levels"`
 	EquipmentTypes     map[string]int   `json:"equipment_types"`
-}
-
-// passOutcomes is the set of InspectionOutcome values counted as a pass.
-var passOutcomes = map[string]bool{
-	"Passed":               true,
-	"Passed Major":         true,
-	"Passed Sub":           true,
-	"Complete":             true,
-	"Complete Enforcement": true,
-	"All Orders Resolved":  true,
 }
 
 // GET /api/fleet/stats

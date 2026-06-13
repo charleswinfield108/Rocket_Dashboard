@@ -49,15 +49,10 @@ type server struct {
 	cfg config
 	db  *pgxpool.Pool
 
-	// Loaded at startup from CSV files. All maps are keyed by ElevatingDevicesNumber
-	// (exposed as "id" in JSON), except ordersByInsp which is keyed by InspectionNumber.
-	elevators         map[int]*elevatorRow
-	elevatorIDs       []int // stable insertion order for deterministic pagination
-	inspByElev        map[int][]*inspectionRow
-	ordersByInsp      map[int][]*orderRow
-	ordersByElev      map[int][]*orderRow
-	predictions       map[int]*predictionRow
-	predictionsLoaded bool
+	// order.csv is not in the DB schema; loaded at startup into two maps.
+	// ordersByInsp keyed by InspectionNumber; ordersByElev by ElevatingDevicesNumber.
+	ordersByInsp map[int][]*orderRow
+	ordersByElev map[int][]*orderRow
 }
 
 func (s *server) routes() http.Handler {
@@ -99,15 +94,10 @@ func main() {
 	defer pool.Close()
 
 	srv := &server{cfg: cfg, db: pool}
-	if err := srv.loadData(); err != nil {
-		log.Fatal(err)
+	if err := srv.loadOrders(); err != nil {
+		log.Fatalf("loading order.csv: %v", err)
 	}
-
-	log.Printf("loaded: %d elevators, %d inspection groups, %d order groups",
-		len(srv.elevators), len(srv.inspByElev), len(srv.ordersByElev))
-	if !srv.predictionsLoaded {
-		log.Printf("predictions.csv not found — GET /api/elevators/{id}/risk returns 503 until Task 6 generates it")
-	}
+	log.Printf("loaded: %d order groups from order.csv", len(srv.ordersByElev))
 
 	addr := fmt.Sprintf(":%s", cfg.port)
 	log.Printf("elevator fleet API listening on %s (data: %s)", addr, cfg.dataDir)
