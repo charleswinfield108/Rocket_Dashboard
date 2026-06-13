@@ -1907,6 +1907,40 @@ The `/validate-api` conformance suite hit session usage limits during the first 
 
 ---
 
+## Entry 48 — 2026-06-12
+
+**Task:** AND-105, Task 6 — Local LLM Risk Explanations Notebook (Ollama + PostgreSQL)
+
+**Prompt:**
+> Create `intelligence/risk_explanations.ipynb`. Install Ollama and pull a model. Query the database for the 10 highest-risk elevators. Design a system prompt with role definition, output format, domain context, and citation instructions. Try at least 3 variations. Use `/branch` to explore different prompt directions. Document Writer/Reviewer on prompt engineering in the notebook and log.
+
+**Techniques applied:**
+- *DB-grounded prompting.* Each Ollama call receives a structured user message built from live database rows: last 5 inspections, incidents in past 2 years, alterations. The system prompt defines what the risk score means (P(Follow up)) so the model can produce semantically correct explanations rather than generic safety text.
+- *`/branch` prompt exploration.* Three prompt variations were trialled on the same 3 elevators (ranks #1, #5, #10) before committing to a final design. Branching on prompt direction, not on code — the three branches were: minimal role only (V1), domain-rich context (V2), and explicit guardrails for missing data (V3).
+- *Writer/Reviewer on prompt engineering.* Writer produced V3 as the candidate. Reviewer identified 5 issues: TSSA hallucination anchor (R1), ambiguous sentence count for sparse data (R2), NULL date values appearing as "None" in user messages (R3), redundant risk level in opening sentence (R4), and unhandled unfamiliar predicted_outcome strings (R5). R1, R2, and R3 were accepted and corrected in the final prompt.
+
+**`/branch` comparison — what changed between directions:**
+
+| Branch | Characteristic failure | Why eliminated |
+|--------|----------------------|----------------|
+| V1 — minimal | Produced 4–6 sentence responses; hallucinated regulatory citations ("O. Reg. 209/01") from training data; used "may indicate" hedging | Too verbose; invented compliance references not in data |
+| V2 — domain-rich | Improved sentence quality; still hallucinated for elevators with no incident data ("lack of incidents may reflect underreporting") | Hallucination on empty fields unacceptable for safety dashboard |
+| V3 (final) | Consistent 2-sentence output; cites dates; states "no incidents on record" correctly | **Selected** — precision over fluency for ops dashboard context |
+
+**Key finding — model behaviour on empty fields:** All three prompt versions received elevators with `(no incidents in past 2 years)`. V1 and V2 filled this with plausible-sounding invented text. V3's explicit rule ("if field is absent, write 'no [field] on record'") eliminated this class of hallucination. This is the most important finding: for structured-data explanation tasks, explicit absence guardrails are mandatory, not optional.
+
+**Key finding — confidence score in output:** Despite Rule 4 ("do not repeat the risk level"), the model frequently restated the confidence percentage in its explanations (e.g., "85.8% confidence"). This did not violate the rule as written (which targeted the risk level label, not the score), but produced slightly redundant output. A revised rule in a future prompt version should explicitly exclude the confidence value as well.
+
+**Model choice rationale (for record):** `gemma2:2b` chosen over `llama3.1:8b` and `mistral:7b`. The 2B model produces coherent 1–3 sentence structured output at ~10–15 tok/s on CPU, completing the 10-elevator batch in approximately 2 minutes. Larger models produced marginally better prose but added 4–5× latency per call with no material improvement in data citation accuracy on this task. For a dashboard batch job, inference time matters.
+
+**What I would change next time:**
+
+The three-prompt trial ran all 9 calls (3 prompts × 3 elevators) sequentially before comparing outputs. Running two candidate prompts in parallel on the same elevator would have cut the exploration time in half and provided an immediate A/B comparison in a single output cell. For prompt engineering tasks with multiple variations, a parallel call pattern is worth the minor added complexity.
+
+The Reviewer pass was done after the 9-call trial, meaning the final prompt was designed before the Reviewer's R3 finding (NULL date → "None" in user message) was known. Running the Reviewer pass on V2 before running the trial would have caught R3 before any Ollama calls were made.
+
+---
+
 ## Entry 47 — 2026-06-12
 
 **Tool:** GitHub Copilot (claude-sonnet-4-6)
