@@ -1789,3 +1789,121 @@ The `skipped` counter in the summary conflates two different kinds of skip: pars
 
 ---
 
+## Entry 45 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 4 — AND-105: PostgreSQL Migration, Step 6 — CSV Code Removal and Most Complex Query Conversion**
+
+---
+
+**Prompt (paraphrased):**
+> Remove all CSV-reading code from the Go server. The server must depend entirely on PostgreSQL. Delete all structs and loaders except those needed for order.csv. Redesign lookupElevator — it returned *elevatorRow from the in-memory map; that type no longer exists after removing elevatorRow. Build must be clean.
+
+---
+
+**What Claude did:**
+
+*Scope decision.* The five-table PostgreSQL schema (`elevators`, `inspections`, `predictions`, `licenses`, `incidents`) covers four of the five CSV sources. `order.csv` has no DB table — its data feeds the risk endpoint and is too deeply coupled to per-inspection enrichment to migrate without schema changes. The decision: keep `orderRow`, all CSV helpers (`readCSV`, `colIdx`, `cell`, `parseDate`, `optStr`, `optInt`, `mustInt`, `mustFloat`), and `loadOrders()`; delete everything else.
+
+*Removed from data.go:* `elevatorRow`, `inspectionRow`, `predictionRow` structs and their loaders (`loadElevators`, `loadInspections`, `loadPredictions`, `loadData`). One date layout (`"02-Jan-06"` for license.csv) removed from `dateLayouts` since no remaining code uses it.
+
+*Removed from main.go:* The `server` struct fields `elevators map[int]*elevatorRow`, `elevatorIDs []int`, `inspByElev map[int][]inspectionRow`, `predictions map[int]predictionRow`, `predictionsLoaded bool`. The call to `loadData()` replaced with `loadOrders()` called directly.
+
+*lookupElevator redesign.* The function formerly returned `(*elevatorRow, bool)` from the in-memory map. After `elevatorRow` was deleted, this was impossible. The redesign returns `(int, bool)` and queries `SELECT EXISTS(SELECT 1 FROM elevators WHERE id = $1)`. All three callers updated: variable renamed from `e` to `id`, all `e.ID` references replaced with `id`.
+
+*passOutcomes var removal.* After the fleet-stats and fleet-alerts handlers were migrated to SQL `IN` clauses in Step 4, the `passOutcomes []string` slice in handlers.go was left as dead code. Removed in Step 6.
+
+---
+
+**Most complex query conversion — handleFleetAlerts:**
+
+The original handler looped over `elevatorIDs`, looked up each elevator in three maps, and applied hard-coded thresholds in Go to decide which elevators to include in the alerts list. The equivalent SQL required expressing all of those cross-table conditions as a single query with a correlated subquery and a LATERAL join:
+
+```sql
+SELECT
+    e.id,
+    e.location,
+    e.device_type,
+    e.license_status,
+    p.risk_level,
+    TO_CHAR(li.latest_date, 'YYYY-MM-DD') AS last_inspection_date,
+    COALESCE(li.outcome, '')              AS last_inspection_outcome
+FROM elevators e
+JOIN predictions p ON p.elevator_id = e.id
+JOIN LATERAL (
+    SELECT latest_date, outcome
+    FROM   inspections
+    WHERE  elevator_id = e.id
+    ORDER  BY latest_date DESC NULLS LAST
+    LIMIT  1
+) li ON true
+WHERE
+    p.risk_level IN ('high', 'medium')
+    OR e.license_status NOT IN ('Active', 'Renewal in Progress')
+    OR li.latest_date < NOW() - INTERVAL '12 months'
+ORDER BY
+    CASE p.risk_level
+        WHEN 'high'   THEN 1
+        WHEN 'medium' THEN 2
+        ELSE               3
+    END,
+    e.id
+```
+
+The `JOIN LATERAL` replaces the per-elevator inspection lookup: for each elevator row, the lateral subquery selects the most recent inspection date and outcome. `NULLS LAST` handles elevators with no inspections. The `WHERE` clause directly encodes the three alert criteria that were previously three separate Go `if` statements. The `CASE` in `ORDER BY` replicates the Go sort that ordered high-risk alerts before medium before other. This moved approximately 60 lines of Go loop logic into 30 lines of SQL, with no intermediate slice allocation.
+
+---
+
+**What I would change next time:**
+
+The `lookupElevator` redesign added a `SELECT EXISTS` round-trip before every per-elevator endpoint. A post-merge code review (worktree reviewer, /code-review skill) later identified this as partially redundant: `handleGetElevator` and `handleGetRisk` both already handle `pgx.ErrNoRows` and could have the EXISTS check removed. Only `handleGetInspections` genuinely needs it, because an empty result set for an unknown elevator returns 200 + `[]` rather than 404. If I had considered the per-handler error handling before redesigning `lookupElevator`, I would have kept it only for `handleGetInspections` and let the other two handlers rely on their own `ErrNoRows` paths — saving one DB round-trip per request on two of the three per-elevator endpoints.
+
+---
+
+## Entry 46 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 5 — AND-105: Branch Reorganization, Multi-Source Code Review, and PR Creation**
+
+---
+
+**Prompt (paraphrased):**
+> Move the Task 4 commits off main onto a feature branch named database-integration. Create a PR with an AI-transparency description documenting exactly which files were generated by Claude vs hand-edited by me vs written manually. Run the worktree reviewer, /code-review, and /security-review. Consolidate findings into docs/code_review_report.md. Fix the top finding. Push and create the PR.
+
+---
+
+**What Claude did:**
+
+*Branch reorganization.* Discovered that `origin/main` was at commit `9499164` — only three of the six AND-105 commits had been pushed to origin, not the expected zero. Option A was chosen: reset local `main` to match `origin/main` at `9499164`, create `database-integration` from there with the four Task 4 commits. No force-push required.
+
+*Worktree reviewer.* Run as `claude --worktree db-reviewer` in a separate terminal session. Produced 4 blockers and 5 minors. Blocker 1 (passRate NULL scan) and Blocker 3 (sslmode=disable) became the two highest-priority items for the review cycle.
+
+*/code-review skill — 7-angle finder pass.* Seven independent finder agents ran in parallel: line-by-line diff scan (A), removed-behavior auditor (B), cross-file tracer (C), reuse/simplification/efficiency (D/E/F), and altitude (G). Each surfaced up to 6 candidates. After deduplication, 9 unique candidates entered the verifier pass.
+
+*/code-review skill — verifier pass.* Five per-candidate verifiers ran in parallel:
+- passRate NULL scan: **PLAUSIBLE** (empty table is a real but non-default state)
+- id aliasing in handleGetElevator: **REFUTED** (pgx.ErrNoRows never calls Scan; the corrupted-id path is structurally impossible)
+- No snapshot isolation in fleet-stats: **PLAUSIBLE** (ETL-only DB makes it unlikely; architecturally unsound)
+- sslmode=disable: **CONFIRMED**
+- Double-close on equipRows: **CONFIRMED** (explicit close is load-bearing; defer is misleading)
+
+Final output: 8 findings (1 REFUTED dropped). Most severe: passRate NULL crash.
+
+*Security review.* 10 findings across 7 dimensions: HIGH — raw pgx error strings leaked in all 500 responses (15 call sites expose table/column names); MEDIUM — sslmode hardcoded, no auth middleware, unbounded `?status=` string, unbounded `?page=` offset; LOW — fragile scan-error path in rows.Next() loop, DATA_DIR not confined to base path; INFO — all SQL uses $N bind params (no injection confirmed), pgx v5.10.0 pinned.
+
+*Top fix.* `var passRate float64` → `var passRate *float64`; `passRate := 0.0; if passRatePtr != nil { passRate = *passRatePtr }`. Prevents pgx scan error when inspections table is empty.
+
+*PR.* Committed fix + `docs/code_review_report.md` in one commit (`99efc09`). Branch pushed to `origin/database-integration`. PR #6 created and merged manually.
+
+---
+
+**What I would change next time:**
+
+The branch reorganization step lost the Step 6 working tree changes because `git reset --hard` was run while changes were uncommitted. Stashing before any branch operation and verifying stash contents before the reset would have prevented the complete re-application of all Step 6 edits from scratch.
+
+The `/validate-api` conformance suite hit session usage limits during the first run attempt. Running validators immediately after each endpoint is migrated (per-step) rather than batching all six at the end of Task 4 would catch regressions earlier and avoid the all-or-nothing dependency on session availability.
+
+---
+
