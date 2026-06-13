@@ -738,11 +738,15 @@ SELECT
 FROM inspections`
 
 	var totalInsp int
-	var passRate float64
-	if err := s.db.QueryRow(ctx, inspQ).Scan(&totalInsp, &passRate); err != nil {
+	var passRatePtr *float64 // nullable: NULLIF returns NULL when inspections table is empty
+	if err := s.db.QueryRow(ctx, inspQ).Scan(&totalInsp, &passRatePtr); err != nil {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"failed to query inspection stats: "+err.Error())
 		return
+	}
+	passRate := 0.0
+	if passRatePtr != nil {
+		passRate = *passRatePtr
 	}
 
 	// Query 3: risk-level counts + unscored.
