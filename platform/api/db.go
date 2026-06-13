@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -43,10 +44,15 @@ func parseDBConfig() (dbConfig, error) {
 }
 
 func (c dbConfig) dsn() string {
-	return fmt.Sprintf(
-		"host=%s port=%s dbname=%s user=%s password=%s sslmode=disable",
-		c.host, c.port, c.name, c.user, c.password,
-	)
+	// URL form percent-encodes user/password, avoiding libpq keyword=value
+	// parsing bugs when the password contains spaces, '=', or backslashes.
+	sslMode := os.Getenv("DB_SSL_MODE")
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=%s",
+		url.QueryEscape(c.user), url.QueryEscape(c.password),
+		c.host, c.port, c.name, sslMode)
 }
 
 // openDB builds a pgxpool, then verifies the connection with a ping.
@@ -59,6 +65,8 @@ func openDB(cfg dbConfig) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parsing DB config: %w", err)
 	}
 	poolCfg.MaxConns = 10
+	poolCfg.MaxConnLifetime = 30 * time.Minute // recycle before cloud firewalls drop stale TCP
+	poolCfg.MaxConnIdleTime = 5 * time.Minute  // release idle connections promptly
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

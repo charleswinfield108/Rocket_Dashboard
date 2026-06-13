@@ -112,11 +112,25 @@ if passRatePtr != nil {
 
 ---
 
-## 5. Outstanding Items (not fixed in this PR)
+## 5. Fixes Applied — Worktree Reviewer Follow-up
+
+Three additional findings from the `db-reviewer` worktree session, applied post-merge:
+
+| # | File | Finding | Fix |
+|---|------|---------|-----|
+| WR1 | `main.go:105` | `http.ListenAndServe` with no timeouts — slow-loris clients hold goroutines indefinitely | Replaced with explicit `http.Server{ReadTimeout:5s, WriteTimeout:10s, IdleTimeout:60s}` |
+| WR2 | `db.go:45` | DSN built with `fmt.Sprintf` — `DB_PASSWORD` containing `=`, spaces, or `\` silently misparses | Switched to URL form with `url.QueryEscape(user/password)` |
+| WR3 | `db.go:61` | No `MaxConnLifetime`/`MaxConnIdleTime` — cloud firewalls silently drop stale pool connections | Added `MaxConnLifetime=30m`, `MaxConnIdleTime=5m` |
+
+Also resolved by WR2: the `sslmode=disable` hardcoded issue (S1/CR2/B3) — `DB_SSL_MODE` env var now controls SSL mode, defaulting to `disable`.
+
+---
+
+## 6. Outstanding Items (not fixed in this PR)
 
 | Priority | Item | Tracking |
 |----------|------|---------|
-| High | Add `DB_SSL_MODE` env var override to `db.go` | Future PR |
+| ~~High~~ | ~~Add `DB_SSL_MODE` env var override to `db.go`~~ | Fixed (WR2) |
 | High | Add `*_test.go` files for DB layer | Future PR |
 | Medium | Wrap data handler contexts with `context.WithTimeout` | Future PR |
 | Medium | Remove redundant `lookupElevator` from `handleGetElevator` | Future PR |

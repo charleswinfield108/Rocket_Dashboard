@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -102,7 +103,14 @@ func main() {
 	addr := fmt.Sprintf(":%s", cfg.port)
 	log.Printf("elevator fleet API listening on %s (data: %s)", addr, cfg.dataDir)
 
-	if err := http.ListenAndServe(addr, srv.routes()); err != nil {
+	httpSrv := &http.Server{
+		Addr:         addr,
+		Handler:      srv.routes(),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
