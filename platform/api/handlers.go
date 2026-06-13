@@ -2,11 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"math"
+	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // ── error type ────────────────────────────────────────────────────────────────
@@ -144,20 +145,27 @@ func (s *server) parseID(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return id, true
 }
 
-// lookupElevator validates {id} and confirms it exists in merged_elevator_data.csv.
-// On failure it writes 400 or 404 and returns (nil, false).
-func (s *server) lookupElevator(w http.ResponseWriter, r *http.Request) (*elevatorRow, bool) {
+// lookupElevator validates {id} and confirms the elevator exists in the DB.
+// Returns (id, true) on success; writes 400/404 and returns (0, false) on failure.
+func (s *server) lookupElevator(w http.ResponseWriter, r *http.Request) (int, bool) {
 	id, ok := s.parseID(w, r)
 	if !ok {
-		return nil, false
+		return 0, false
 	}
-	e, found := s.elevators[id]
-	if !found {
+	var exists bool
+	if err := s.db.QueryRow(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM elevators WHERE id = $1)`, id,
+	).Scan(&exists); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to look up elevator: "+err.Error())
+		return 0, false
+	}
+	if !exists {
 		s.writeError(w, http.StatusNotFound, "ELEVATOR_NOT_FOUND",
 			"no elevator found with id "+strconv.Itoa(id))
-		return nil, false
+		return 0, false
 	}
-	return e, true
+	return id, true
 }
 
 // parseQueryInt parses an optional query-string integer, returning def when empty.
@@ -171,17 +179,20 @@ func parseQueryInt(s string, def int) (int, error) {
 // ── handlers ──────────────────────────────────────────────────────────────────
 
 // GET /api/elevators
+// Two queries: COUNT for pagination total, then paginated rows with LATERAL
+// joins for latest inspection and a LEFT JOIN for risk_level from predictions.
+// Status filter uses a parameter guard ($1 = ” skips the filter).
 func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	qp := r.URL.Query()
 
-	page, err := parseQueryInt(q.Get("page"), 1)
+	page, err := parseQueryInt(qp.Get("page"), 1)
 	if err != nil || page < 1 {
 		s.writeError(w, http.StatusBadRequest, "INVALID_PARAMETER",
 			"page must be a positive integer")
 		return
 	}
 
-	limit, err := parseQueryInt(q.Get("limit"), 100)
+	limit, err := parseQueryInt(qp.Get("limit"), 100)
 	if err != nil {
 		s.writeError(w, http.StatusBadRequest, "INVALID_PARAMETER",
 			"limit must be between 1 and 500")
@@ -193,46 +204,89 @@ func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	statusFilter := q.Get("status")
+	statusFilter := qp.Get("status")
+	ctx := r.Context()
 
-	// Filter: preserve insertion order so pagination is deterministic.
-	filtered := make([]int, 0, len(s.elevatorIDs))
-	for _, id := range s.elevatorIDs {
-		e := s.elevators[id]
-		if statusFilter == "" || e.LicenseStatus == statusFilter {
-			filtered = append(filtered, id)
-		}
+	const countQ = `
+SELECT COUNT(*)::int
+FROM elevators
+WHERE $1 = '' OR license_status = $1`
+
+	var total int
+	if err := s.db.QueryRow(ctx, countQ, statusFilter).Scan(&total); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to count elevators: "+err.Error())
+		return
 	}
 
-	total := len(filtered)
-	start := (page - 1) * limit
-	if start >= total {
-		start = total
-	}
-	end := start + limit
-	if end > total {
-		end = total
-	}
+	const listQ = `
+SELECT
+    e.id,
+    COALESCE(e.location, '')                                AS location,
+    COALESCE(e.device_type, '')                             AS device_type,
+    COALESCE(e.device_status, '')                           AS device_status,
+    e.license_status,
+    TO_CHAR(e.license_expiry, 'YYYY-MM-DD')                 AS license_expiry,
+    TO_CHAR(li.latest_date, 'YYYY-MM-DD')                   AS latest_inspection_date,
+    li.outcome                                              AS latest_inspection_outcome,
+    p.risk_level
+FROM elevators e
+LEFT JOIN LATERAL (
+    SELECT latest_date, outcome
+    FROM inspections
+    WHERE elevator_id = e.id
+    ORDER BY latest_date DESC NULLS LAST
+    LIMIT 1
+) li ON true
+LEFT JOIN predictions p ON p.elevator_id = e.id
+WHERE $1 = '' OR e.license_status = $1
+ORDER BY e.id
+LIMIT $2 OFFSET $3`
 
-	items := make([]fleetItem, 0, end-start)
-	for _, id := range filtered[start:end] {
-		e := s.elevators[id]
-		var riskLevel *string
-		if pred, ok := s.predictions[e.ID]; ok {
-			rl := pred.RiskLevel
-			riskLevel = &rl
+	rows, err := s.db.Query(ctx, listQ, statusFilter, limit, (page-1)*limit)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query elevators: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := make([]fleetItem, 0)
+	for rows.Next() {
+		var (
+			id                      int
+			location                string
+			deviceType              string
+			deviceStatus            string
+			licenseStatus           string
+			licenseExpiry           *string
+			latestInspectionDate    *string
+			latestInspectionOutcome *string
+			riskLevel               *string
+		)
+		if err := rows.Scan(&id, &location, &deviceType, &deviceStatus,
+			&licenseStatus, &licenseExpiry, &latestInspectionDate,
+			&latestInspectionOutcome, &riskLevel); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"failed to scan elevator: "+err.Error())
+			return
 		}
 		items = append(items, fleetItem{
-			ID:                      e.ID,
-			Location:                e.Location,
-			DeviceType:              e.DeviceType,
-			DeviceStatus:            e.DeviceStatus,
-			LicenseStatus:           e.LicenseStatus,
-			LicenseExpiry:           e.LicenseExpiry,
-			LatestInspectionDate:    e.LatestInspectionDate,
-			LatestInspectionOutcome: e.LatestInspectionOutcome,
+			ID:                      id,
+			Location:                location,
+			DeviceType:              deviceType,
+			DeviceStatus:            deviceStatus,
+			LicenseStatus:           licenseStatus,
+			LicenseExpiry:           licenseExpiry,
+			LatestInspectionDate:    latestInspectionDate,
+			LatestInspectionOutcome: latestInspectionOutcome,
 			RiskLevel:               riskLevel,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to iterate elevators: "+err.Error())
+		return
 	}
 
 	s.writeJSON(w, http.StatusOK, listResponse{
@@ -244,56 +298,192 @@ func (s *server) handleListElevators(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/elevators/{id}
+// All 21 fields come from the DB: elevators table plus three LATERAL subqueries
+// for alteration count, latest alteration, and latest inspection.
 func (s *server) handleGetElevator(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
+
+	const q = `
+SELECT
+    e.id,
+    COALESCE(e.location, '')                                AS location,
+    COALESCE(e.device_type, '')                             AS device_type,
+    COALESCE(e.device_class, '')                            AS device_class,
+    COALESCE(e.device_status, '')                           AS device_status,
+    COALESCE(e.under_review, false)                         AS under_review,
+    COALESCE(e.license_number, '')                          AS license_number,
+    e.license_status,
+    TO_CHAR(e.license_expiry, 'YYYY-MM-DD')                 AS license_expiry,
+    COALESCE(e.license_holder, '')                          AS license_holder,
+    COALESCE(e.license_holder_address, '')                  AS license_holder_address,
+    COALESCE(e.billing_customer, '')                        AS billing_customer,
+    COALESCE(e.billing_address, '')                         AS billing_address,
+    COALESCE(e.owner_name, '')                              AS owner_name,
+    COALESCE(e.owner_address, '')                           AS owner_address,
+    NULLIF(ac.cnt, 0)                                       AS alteration_count,
+    la.alteration_type                                      AS latest_alteration_type,
+    la.status                                               AS latest_alteration_status,
+    TO_CHAR(li.latest_date, 'YYYY-MM-DD')                   AS latest_inspection_date,
+    li.inspection_type                                      AS latest_inspection_type,
+    li.outcome                                              AS latest_inspection_outcome
+FROM elevators e
+LEFT JOIN LATERAL (
+    SELECT COUNT(*)::int AS cnt
+    FROM alterations
+    WHERE elevator_id = e.id
+) ac ON true
+LEFT JOIN LATERAL (
+    SELECT alteration_type, status
+    FROM alterations
+    WHERE elevator_id = e.id
+    ORDER BY id DESC
+    LIMIT 1
+) la ON true
+LEFT JOIN LATERAL (
+    SELECT latest_date, inspection_type, outcome
+    FROM inspections
+    WHERE elevator_id = e.id
+    ORDER BY latest_date DESC NULLS LAST
+    LIMIT 1
+) li ON true
+WHERE e.id = $1`
+
+	var (
+		location                string
+		deviceType              string
+		deviceClass             string
+		deviceStatus            string
+		underReview             bool
+		licenseNumber           string
+		licenseStatus           string
+		licenseExpiry           *string
+		licenseHolder           string
+		licenseHolderAddress    string
+		billingCustomer         string
+		billingAddress          string
+		ownerName               string
+		ownerAddress            string
+		alterationCount         *int
+		latestAlterationType    *string
+		latestAlterationStatus  *string
+		latestInspectionDate    *string
+		latestInspectionType    *string
+		latestInspectionOutcome *string
+	)
+
+	err := s.db.QueryRow(r.Context(), q, id).Scan(
+		&id,
+		&location,
+		&deviceType,
+		&deviceClass,
+		&deviceStatus,
+		&underReview,
+		&licenseNumber,
+		&licenseStatus,
+		&licenseExpiry,
+		&licenseHolder,
+		&licenseHolderAddress,
+		&billingCustomer,
+		&billingAddress,
+		&ownerName,
+		&ownerAddress,
+		&alterationCount,
+		&latestAlterationType,
+		&latestAlterationStatus,
+		&latestInspectionDate,
+		&latestInspectionType,
+		&latestInspectionOutcome,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			s.writeError(w, http.StatusNotFound, "ELEVATOR_NOT_FOUND",
+				"no elevator found with id "+strconv.Itoa(id))
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query elevator: "+err.Error())
+		return
+	}
+
 	s.writeJSON(w, http.StatusOK, detailResponse{
-		ID:                      e.ID,
-		Location:                e.Location,
-		DeviceType:              e.DeviceType,
-		DeviceClass:             e.DeviceClass,
-		DeviceStatus:            e.DeviceStatus,
-		UnderReview:             e.UnderReview,
-		LicenseNumber:           e.LicenseNumber,
-		LicenseStatus:           e.LicenseStatus,
-		LicenseExpiry:           e.LicenseExpiry,
-		LicenseHolder:           e.LicenseHolder,
-		LicenseHolderAddress:    e.LicenseHolderAddress,
-		BillingCustomer:         e.BillingCustomer,
-		BillingAddress:          e.BillingAddress,
-		OwnerName:               e.OwnerName,
-		OwnerAddress:            e.OwnerAddress,
-		AlterationCount:         e.AlterationCount,
-		LatestAlterationType:    e.LatestAlterationType,
-		LatestAlterationStatus:  e.LatestAlterationStatus,
-		LatestInspectionDate:    e.LatestInspectionDate,
-		LatestInspectionType:    e.LatestInspectionType,
-		LatestInspectionOutcome: e.LatestInspectionOutcome,
+		ID:                      id,
+		Location:                location,
+		DeviceType:              deviceType,
+		DeviceClass:             deviceClass,
+		DeviceStatus:            deviceStatus,
+		UnderReview:             underReview,
+		LicenseNumber:           licenseNumber,
+		LicenseStatus:           licenseStatus,
+		LicenseExpiry:           licenseExpiry,
+		LicenseHolder:           licenseHolder,
+		LicenseHolderAddress:    licenseHolderAddress,
+		BillingCustomer:         billingCustomer,
+		BillingAddress:          billingAddress,
+		OwnerName:               ownerName,
+		OwnerAddress:            ownerAddress,
+		AlterationCount:         alterationCount,
+		LatestAlterationType:    latestAlterationType,
+		LatestAlterationStatus:  latestAlterationStatus,
+		LatestInspectionDate:    latestInspectionDate,
+		LatestInspectionType:    latestInspectionType,
+		LatestInspectionOutcome: latestInspectionOutcome,
 	})
 }
 
 // GET /api/elevators/{id}/inspections
+// Inspections come from the database. Orders embedded in each inspection
+// still come from in-memory order.csv data — order.csv is not in the DB schema.
 func (s *server) handleGetInspections(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
 
-	raw := s.inspByElev[e.ID] // nil slice if elevator has no inspections — that's fine
+	const q = `
+SELECT
+    i.id                                                    AS inspection_number,
+    COALESCE(i.service_request_number, '')                  AS service_request_number,
+    COALESCE(i.customer, '')                                AS inspection_customer,
+    COALESCE(i.inspection_type, '')                         AS inspection_type,
+    COALESCE(i.location, '')                                AS location,
+    COALESCE(TO_CHAR(i.earliest_date, 'YYYY-MM-DD'), '')    AS earliest_date,
+    COALESCE(TO_CHAR(i.latest_date,   'YYYY-MM-DD'), '')    AS latest_date,
+    COALESCE(i.outcome, '')                                 AS outcome
+FROM inspections i
+WHERE i.elevator_id = $1
+ORDER BY i.latest_date DESC NULLS LAST`
 
-	// Copy so we don't sort the original slice in place.
-	sorted := make([]*inspectionRow, len(raw))
-	copy(sorted, raw)
-	// ISO 8601 dates sort lexicographically, so descending string sort = most-recent first.
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].LatestDate > sorted[j].LatestDate
-	})
+	rows, err := s.db.Query(r.Context(), q, id)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query inspections: "+err.Error())
+		return
+	}
+	defer rows.Close()
 
-	items := make([]inspectionItem, 0, len(sorted))
-	for _, insp := range sorted {
-		rawOrders := s.ordersByInsp[insp.InspectionNumber]
+	items := make([]inspectionItem, 0)
+	for rows.Next() {
+		var (
+			inspNum  int
+			svcReq   string
+			customer string
+			inspType string
+			location string
+			earliest string
+			latest   string
+			outcome  string
+		)
+		if err := rows.Scan(&inspNum, &svcReq, &customer, &inspType,
+			&location, &earliest, &latest, &outcome); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"failed to scan inspection row: "+err.Error())
+			return
+		}
+
+		rawOrders := s.ordersByInsp[inspNum]
 		orders := make([]orderItem, 0, len(rawOrders)) // non-nil so it marshals to []
 		for _, ord := range rawOrders {
 			orders = append(orders, orderItem{
@@ -306,43 +496,117 @@ func (s *server) handleGetInspections(w http.ResponseWriter, r *http.Request) {
 				ComplianceDate: ord.ComplianceDate,
 			})
 		}
+
 		items = append(items, inspectionItem{
-			InspectionNumber:     insp.InspectionNumber,
-			ServiceRequestNumber: insp.ServiceRequestNumber,
-			InspectionCustomer:   insp.InspectionCustomer,
-			InspectionType:       insp.InspectionType,
-			Location:             insp.InspectionLocation,
-			EarliestDate:         insp.EarliestDate,
-			LatestDate:           insp.LatestDate,
-			Outcome:              insp.Outcome,
+			InspectionNumber:     inspNum,
+			ServiceRequestNumber: svcReq,
+			InspectionCustomer:   customer,
+			InspectionType:       inspType,
+			Location:             location,
+			EarliestDate:         earliest,
+			LatestDate:           latest,
+			Outcome:              outcome,
 			Orders:               orders,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to iterate inspection rows: "+err.Error())
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, inspectionsResponse{
-		ElevatorID:  e.ID,
+		ElevatorID:  id,
 		Count:       len(items),
 		Inspections: items,
 	})
 }
 
 // GET /api/elevators/{id}/risk
+// Predictions come from the database. Orders (open_orders_count, mean_risk_score)
+// still come from in-memory order.csv data — order.csv is not in the DB schema.
 func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	// 400/404 first — unknown elevator is never a predictions problem.
-	e, ok := s.lookupElevator(w, r)
+	id, ok := s.lookupElevator(w, r)
 	if !ok {
 		return
 	}
 
-	if !s.predictionsLoaded {
-		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-			"predictions are not yet available; predictions.csv will be generated in Task 6")
-		return
-	}
-	pred, found := s.predictions[e.ID]
-	if !found {
-		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-			"no prediction row available for elevator "+strconv.Itoa(e.ID))
+	const q = `
+SELECT
+    predicted_outcome,
+    confidence::float8,
+    risk_score::float8,
+    risk_level,
+    model_version,
+    TO_CHAR(prediction_date, 'YYYY-MM-DD')  AS as_of_date,
+    prob_all_orders_resolved::float8,
+    prob_complete::float8,
+    prob_dc_follow_up::float8,
+    prob_fail_initial::float8,
+    prob_follow_up::float8,
+    prob_follow_up_initial::float8,
+    prob_follow_up_major::float8,
+    prob_follow_up_sub_major::float8,
+    prob_other::float8,
+    prob_passed::float8,
+    prob_passed_major::float8,
+    prob_shutdown::float8,
+    prob_unable_to_inspect::float8
+FROM predictions
+WHERE elevator_id = $1`
+
+	var (
+		predictedOutcome  string
+		confidence        float64
+		riskScore         float64
+		riskLevel         string
+		modelVersion      string
+		asOfDate          string
+		pAllOrders        float64
+		pComplete         float64
+		pDCFollowUp       float64
+		pFailInitial      float64
+		pFollowUp         float64
+		pFollowUpInitial  float64
+		pFollowUpMajor    float64
+		pFollowUpSubMajor float64
+		pOther            float64
+		pPassed           float64
+		pPassedMajor      float64
+		pShutdown         float64
+		pUnableToInspect  float64
+	)
+
+	err := s.db.QueryRow(r.Context(), q, id).Scan(
+		&predictedOutcome,
+		&confidence,
+		&riskScore,
+		&riskLevel,
+		&modelVersion,
+		&asOfDate,
+		&pAllOrders,
+		&pComplete,
+		&pDCFollowUp,
+		&pFailInitial,
+		&pFollowUp,
+		&pFollowUpInitial,
+		&pFollowUpMajor,
+		&pFollowUpSubMajor,
+		&pOther,
+		&pPassed,
+		&pPassedMajor,
+		&pShutdown,
+		&pUnableToInspect,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
+				"no prediction row available for elevator "+strconv.Itoa(id))
+			return
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query predictions: "+err.Error())
 		return
 	}
 
@@ -350,7 +614,7 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	// mean_risk_score: mean over orders that have a non-empty RISKSCORE cell only;
 	// empty cells must not contribute to the denominator (they coerce to 0.0 and
 	// dilute the mean — elevator 10 has 7 empty out of 24 rows).
-	orders := s.ordersByElev[e.ID]
+	orders := s.ordersByElev[id]
 	openCount := 0
 	var riskSum float64
 	var riskCount int
@@ -370,16 +634,30 @@ func (s *server) handleGetRisk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, riskResponse{
-		ElevatorID:       e.ID,
-		PredictedOutcome: pred.PredictedOutcome,
-		Confidence:       pred.Confidence,
-		RiskScore:        jsonFloat(pred.RiskScore),
-		RiskLevel:        pred.RiskLevel,
-		ClassProbs:       pred.ClassProbabilities,
-		OpenOrdersCount:  openCount,
-		MeanRiskScore:    meanRisk,
-		ModelVersion:     pred.ModelVersion,
-		AsOfDate:         pred.AsOfDate,
+		ElevatorID:       id,
+		PredictedOutcome: predictedOutcome,
+		Confidence:       confidence,
+		RiskScore:        jsonFloat(riskScore),
+		RiskLevel:        riskLevel,
+		ClassProbs: map[string]jsonFloat{
+			"All Orders Resolved": jsonFloat(pAllOrders),
+			"Complete":            jsonFloat(pComplete),
+			"DC Follow up":        jsonFloat(pDCFollowUp),
+			"Fail Initial":        jsonFloat(pFailInitial),
+			"Follow Up Initial":   jsonFloat(pFollowUpInitial),
+			"Follow up":           jsonFloat(pFollowUp),
+			"Follow up Major":     jsonFloat(pFollowUpMajor),
+			"Follow up Sub Major": jsonFloat(pFollowUpSubMajor),
+			"Other":               jsonFloat(pOther),
+			"Passed":              jsonFloat(pPassed),
+			"Passed Major":        jsonFloat(pPassedMajor),
+			"Shutdown":            jsonFloat(pShutdown),
+			"Unable to Inspect":   jsonFloat(pUnableToInspect),
+		},
+		OpenOrdersCount: openCount,
+		MeanRiskScore:   meanRisk,
+		ModelVersion:    modelVersion,
+		AsOfDate:        asOfDate,
 	})
 }
 
@@ -400,76 +678,101 @@ type fleetStatsResponse struct {
 	EquipmentTypes     map[string]int   `json:"equipment_types"`
 }
 
-// passOutcomes is the set of InspectionOutcome values counted as a pass.
-var passOutcomes = map[string]bool{
-	"Passed":               true,
-	"Passed Major":         true,
-	"Passed Sub":           true,
-	"Complete":             true,
-	"Complete Enforcement": true,
-	"All Orders Resolved":  true,
-}
-
-// GET /api/fleet-stats
+// GET /api/fleet/stats
+// Three DB queries replace: in-memory map iteration (equipment types),
+// per-request inspection.csv re-read (pass rate), and dual in-memory map
+// cross-reference (risk levels + unscored). passOutcomes set kept in sync
+// with the SQL IN clause below.
 func (s *server) handleFleetStats(w http.ResponseWriter, r *http.Request) {
-	// Equipment-type counts — from already-loaded elevator data.
-	equipTypes := make(map[string]int)
-	for _, e := range s.elevators {
-		if e.DeviceType != "" {
-			equipTypes[e.DeviceType]++
-		}
-	}
+	ctx := r.Context()
 
-	// Inspection pass rate — read inspection.csv at request time.
-	inspPath := s.cfg.dataDir + "/inspection.csv"
-	inspHeaders, inspRows, err := readCSV(inspPath)
+	// Query 1: equipment-type distribution + total elevator count.
+	const equipQ = `
+SELECT COALESCE(device_type, ''), COUNT(*)::int
+FROM elevators
+GROUP BY device_type`
+
+	equipRows, err := s.db.Query(ctx, equipQ)
 	if err != nil {
-		s.writeError(w, 500, "INTERNAL_ERROR", "failed to read inspection data")
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query equipment types: "+err.Error())
 		return
 	}
-	idx := colIdx(inspHeaders)
-	totalInsp := len(inspRows)
-	passed := 0
-	for _, row := range inspRows {
-		outcome := strings.TrimSpace(cell(row, idx, "InspectionOutcome"))
-		if passOutcomes[outcome] {
-			passed++
+	defer equipRows.Close()
+
+	equipTypes := make(map[string]int)
+	totalElevators := 0
+	for equipRows.Next() {
+		var dt string
+		var cnt int
+		if err := equipRows.Scan(&dt, &cnt); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"failed to scan equipment type: "+err.Error())
+			return
 		}
+		if dt != "" {
+			equipTypes[dt] = cnt
+		}
+		totalElevators += cnt
 	}
-	var passRate jsonFloat
-	if totalInsp > 0 {
-		passRate = jsonFloat(math.Round(float64(passed)/float64(totalInsp)*10000) / 10000)
+	if err := equipRows.Err(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to iterate equipment types: "+err.Error())
+		return
+	}
+	equipRows.Close()
+
+	// Query 2: inspection pass rate + total (replaces per-request CSV re-read).
+	// ROUND to 4 dp with NUMERIC arithmetic, cast to float8 for jsonFloat scan.
+	// Pass outcomes must match passOutcomes map above exactly.
+	const inspQ = `
+SELECT
+    COUNT(*)::int                                                           AS total_inspections,
+    ROUND(
+        COUNT(*) FILTER (WHERE outcome IN (
+            'Passed', 'Passed Major', 'Passed Sub',
+            'Complete', 'Complete Enforcement', 'All Orders Resolved'
+        ))::numeric / NULLIF(COUNT(*), 0)::numeric,
+        4
+    )::float8                                                               AS pass_rate
+FROM inspections`
+
+	var totalInsp int
+	var passRatePtr *float64 // nullable: NULLIF returns NULL when inspections table is empty
+	if err := s.db.QueryRow(ctx, inspQ).Scan(&totalInsp, &passRatePtr); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query inspection stats: "+err.Error())
+		return
+	}
+	passRate := 0.0
+	if passRatePtr != nil {
+		passRate = *passRatePtr
 	}
 
-	// Risk-level counts — from in-memory predictions (nil when not loaded).
-	var riskCounts *riskLevelCounts
-	if s.predictionsLoaded {
-		counts := riskLevelCounts{}
-		for _, pred := range s.predictions {
-			switch pred.RiskLevel {
-			case "high":
-				counts.High++
-			case "medium":
-				counts.Medium++
-			case "low":
-				counts.Low++
-			}
-		}
-		scored := 0
-		for id := range s.elevators {
-			if _, ok := s.predictions[id]; ok {
-				scored++
-			}
-		}
-		counts.Unscored = len(s.elevators) - scored
-		riskCounts = &counts
+	// Query 3: risk-level counts + unscored.
+	const riskQ = `
+SELECT
+    COUNT(*) FILTER (WHERE risk_level = 'high')::int   AS high,
+    COUNT(*) FILTER (WHERE risk_level = 'medium')::int AS medium,
+    COUNT(*) FILTER (WHERE risk_level = 'low')::int    AS low,
+    (SELECT COUNT(*)::int FROM elevators)
+        - COUNT(DISTINCT elevator_id)::int             AS unscored
+FROM predictions`
+
+	counts := riskLevelCounts{}
+	if err := s.db.QueryRow(ctx, riskQ).Scan(
+		&counts.High, &counts.Medium, &counts.Low, &counts.Unscored,
+	); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query risk levels: "+err.Error())
+		return
 	}
 
 	s.writeJSON(w, http.StatusOK, fleetStatsResponse{
-		TotalElevators:     len(s.elevators),
-		InspectionPassRate: passRate,
+		TotalElevators:     totalElevators,
+		InspectionPassRate: jsonFloat(passRate),
 		TotalInspections:   totalInsp,
-		RiskLevels:         riskCounts,
+		RiskLevels:         &counts,
 		EquipmentTypes:     equipTypes,
 	})
 }
@@ -485,65 +788,74 @@ type alertItem struct {
 	EquipmentType         string    `json:"equipment_type"`
 }
 
-// GET /api/fleet-alerts
+// GET /api/fleet/alerts
+// INNER JOIN LATERAL finds the single most-recent inspection per high-risk
+// elevator; the WHERE on li.outcome replicates the CSV passOutcomes filter.
+// INNER (not LEFT) JOIN on LATERAL means elevators with zero inspections are
+// automatically excluded — matching the CSV handler's explicit len==0 continue.
 func (s *server) handleFleetAlerts(w http.ResponseWriter, r *http.Request) {
-	if !s.predictionsLoaded {
-		s.writeError(w, http.StatusServiceUnavailable, "PREDICTIONS_UNAVAILABLE",
-			"predictions are not yet available")
+	const q = `
+SELECT
+    p.elevator_id,
+    p.risk_score::float8,
+    p.risk_level,
+    TO_CHAR(li.latest_date, 'YYYY-MM-DD')   AS last_inspection_date,
+    COALESCE(li.outcome, '')                AS last_inspection_outcome,
+    COALESCE(e.device_type, '')             AS equipment_type
+FROM predictions p
+JOIN elevators e ON e.id = p.elevator_id
+JOIN LATERAL (
+    SELECT latest_date, outcome
+    FROM inspections
+    WHERE elevator_id = p.elevator_id
+    ORDER BY latest_date DESC NULLS LAST
+    LIMIT 1
+) li ON true
+WHERE p.risk_level = 'high'
+  AND li.outcome NOT IN (
+      'Passed', 'Passed Major', 'Passed Sub',
+      'Complete', 'Complete Enforcement', 'All Orders Resolved'
+  )
+ORDER BY p.risk_score DESC`
+
+	rows, err := s.db.Query(r.Context(), q)
+	if err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to query fleet alerts: "+err.Error())
 		return
 	}
+	defer rows.Close()
 
 	alerts := make([]alertItem, 0)
-
-	for elevID, pred := range s.predictions {
-		if pred.RiskLevel != "high" {
-			continue
-		}
-
-		// Find the most-recent inspection row for this elevator.
-		inspections := s.inspByElev[elevID]
-		if len(inspections) == 0 {
-			continue // no inspection record — skip
-		}
-		latest := inspections[0]
-		for _, insp := range inspections[1:] {
-			if insp.LatestDate > latest.LatestDate {
-				latest = insp
-			}
-		}
-
-		// Only alert if the most-recent outcome is not a pass.
-		if passOutcomes[latest.Outcome] {
-			continue
-		}
-
-		e := s.elevators[elevID]
-		if e == nil {
-			continue // prediction row has no matching elevator in merged_elevator_data.csv — skip
-		}
-		var lastDate *string
-		if latest.LatestDate != "" {
-			d := latest.LatestDate
-			lastDate = &d
-		}
-		equipType := ""
-		if e != nil {
-			equipType = e.DeviceType
+	for rows.Next() {
+		var (
+			elevID    int
+			riskScore float64
+			riskLevel string
+			lastDate  *string
+			lastOut   string
+			equipType string
+		)
+		if err := rows.Scan(&elevID, &riskScore, &riskLevel,
+			&lastDate, &lastOut, &equipType); err != nil {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"failed to scan alert row: "+err.Error())
+			return
 		}
 		alerts = append(alerts, alertItem{
 			ElevatorID:            elevID,
-			RiskScore:             jsonFloat(pred.RiskScore),
-			RiskLevel:             pred.RiskLevel,
+			RiskScore:             jsonFloat(riskScore),
+			RiskLevel:             riskLevel,
 			LastInspectionDate:    lastDate,
-			LastInspectionOutcome: latest.Outcome,
+			LastInspectionOutcome: lastOut,
 			EquipmentType:         equipType,
 		})
 	}
-
-	// Sort descending by risk_score.
-	sort.Slice(alerts, func(i, j int) bool {
-		return alerts[i].RiskScore > alerts[j].RiskScore
-	})
+	if err := rows.Err(); err != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"failed to iterate alert rows: "+err.Error())
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, alerts)
 }

@@ -1,12 +1,12 @@
 # ── builder ───────────────────────────────────────────────────────────────────
 # Full Go toolchain only lives here; nothing from this stage leaks into runtime.
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /build
 
-# Copy module manifest first so dependency downloads are cached separately
-# from source changes. No go.sum because the module has no external deps.
-COPY platform/api/go.mod ./
+# Copy module manifests first so dependency downloads are cached separately
+# from source changes.
+COPY platform/api/go.mod platform/api/go.sum ./
 RUN go mod download
 
 COPY platform/api/*.go ./
