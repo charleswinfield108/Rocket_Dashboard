@@ -129,6 +129,7 @@ type riskResponse struct {
 	MeanRiskScore    *float64             `json:"mean_risk_score"`
 	ModelVersion     string               `json:"model_version"`
 	AsOfDate         string               `json:"as_of_date"`
+	RiskExplanation  *string              `json:"risk_explanation"` // NULL until batch generation runs
 }
 
 // ── shared helpers ────────────────────────────────────────────────────────────
@@ -553,7 +554,8 @@ SELECT
     prob_passed::float8,
     prob_passed_major::float8,
     prob_shutdown::float8,
-    prob_unable_to_inspect::float8
+    prob_unable_to_inspect::float8,
+    risk_explanation
 FROM predictions
 WHERE elevator_id = $1`
 
@@ -577,6 +579,7 @@ WHERE elevator_id = $1`
 		pPassedMajor      float64
 		pShutdown         float64
 		pUnableToInspect  float64
+		riskExplanation   *string
 	)
 
 	err := s.db.QueryRow(r.Context(), q, id).Scan(
@@ -599,6 +602,7 @@ WHERE elevator_id = $1`
 		&pPassedMajor,
 		&pShutdown,
 		&pUnableToInspect,
+		&riskExplanation,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -659,6 +663,7 @@ WHERE elevator_id = $1`
 		MeanRiskScore:   meanRisk,
 		ModelVersion:    modelVersion,
 		AsOfDate:        asOfDate,
+		RiskExplanation: riskExplanation,
 	})
 }
 

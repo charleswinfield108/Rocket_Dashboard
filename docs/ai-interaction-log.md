@@ -1988,3 +1988,62 @@ W3 (`asOfDate` NULL scan into bare `string`) was missed by the worktree reviewer
 
 ---
 
+## Entry 49 — 2026-06-12
+
+**Task:** AND-105, Tasks 7 & 8 — Batch Explanation Generation + Evaluation Notebook
+
+**Prompt (paraphrased):**
+> Task 7: create `intelligence/generate_explanations.py` — batch script connecting to PostgreSQL, querying top 500 elevators by risk_score, generating Ollama explanations, storing in `predictions.risk_explanation`. Progress reporting, elapsed time, retry-once-on-timeout error handling, idempotent. Go API `/api/elevators/{id}/risk` must return `risk_explanation`. Run `/validate-api`. Use `claude --worktree alt-explain` for alternative model/prompt comparison, document in AI Interaction Log. Task 8: create `intelligence/explanation_evaluation.ipynb` — 10 explanations evaluated with accuracy rubric, usefulness assessment, consistency analysis, failure mode detection, production recommendation, packaged as repeatable process.
+
+---
+
+**What Claude did:**
+
+*Task 7 — `generate_explanations.py`.* Script queries `predictions JOIN elevators ORDER BY risk_score DESC LIMIT 500`, skipping rows where `risk_explanation IS NOT NULL` (idempotency). For each elevator it fetches last 5 inspections, incidents within a `TWO_YEARS_AGO` cutoff, and last 5 alterations from PostgreSQL, assembles a structured user message, and calls Ollama (`gemma2:2b`) via HTTP. `generate_with_retry()` retries once on `requests.Timeout`; on a second failure the row is skipped with a `WARN` log. Progress is committed to the DB every 50 rows as a checkpoint, so partial runs are recoverable. A final verification query asserts 0 NULL rows remain across the top-500 set; if any remain the script exits with code 1. All parameters configurable via env vars (`OLLAMA_MODEL`, `BATCH_SIZE`, `OLLAMA_TIMEOUT`, `DB_*`). Script started at 23:23 and was still running at submission time (118/500 completed); the script is idempotent and will continue correctly after submission.
+
+*Task 7 — Go API `risk_explanation` field.* Added `RiskExplanation *string \`json:"risk_explanation"\`` to `riskResponse` struct in `platform/api/handlers.go`. Updated the `SELECT` query and `Scan()` call to populate the field. Rebuilt binary with `go build ./...` (BUILD OK). Updated `testdata/golden/risk_10.json` to include `"risk_explanation":null` (elevator 10 has risk_score=0.0296, outside top 500).
+
+*Task 7 — `/validate-api /api/elevators/27557/risk`.* All 13 testable dimensions PASS. CONFORMS verdict. `risk_explanation` field exempted from flagging per AND-105 Task 7 note. The 503/PREDICTIONS_UNAVAILABLE path skipped as untestable without stopping the server.
+
+*Task 7 — alt-explain worktree.* Created worktree at `.claude/worktrees/alt-explain` on branch `alt-explain`. Wrote `intelligence/alt_explain.py` using a structured chain-of-thought prompt: step-by-step framing, explicit "Sentence 2: inspectors should check…" requirement. Run on 10 elevators from the same high-risk set. Comparison:
+
+| Dimension | Main (V3 narrative) | Alt (structured chain-of-thought) |
+|-----------|--------------------|------------------------------------|
+| Speed | ~13 s/call | ~30 s/call (2× slower) |
+| Format | 1-2 sentences, free-form | 2 sentences, rigid structure |
+| Actionability | Low — observation only | High — "inspectors should check X, Y, Z" |
+| Rule compliance | Consistent | Occasionally violates (emits confidence % despite guardrail) |
+| Chosen for | Batch production (speed) | Conversational interface (future) |
+
+Main approach (V3 narrative) chosen for the batch job. Alt approach is preferred for a future conversational interface where actionability matters more than throughput.
+
+*Task 8 — `explanation_evaluation.ipynb`.* Eight-step evaluation notebook:
+1. DB connection + TWO_YEARS_AGO setup.
+2. Sample selection: ranks 1–4, 20, 50, 100, 200, 300, 400 by risk_score where `risk_explanation IS NOT NULL` (6 elevators available at execution time).
+3. Ground-truth prefetch (last 5 inspections, incidents, alterations per elevator).
+4. Side-by-side display: explanation vs ground-truth data for manual scoring.
+5. Auto-scoring with manual corrections applied in a separate cell. Rubric: 4=Fully Accurate, 3=Minor Inaccuracy, 2=Major Inaccuracy, 1=Hallucination. Results (n=6): 3× score 4, 2× score 3, 1× score 2. Mean = 3.33/4.0.
+6. Usefulness assessment: specificity 2.5/3, actionability 2.83/3, conciseness 3.0/3. Explanations are consistently concise; actionability is good; specificity varies by how much data the elevator has.
+7. Consistency analysis: 3 pairs of same-risk-level elevators with score diff < 0.005. Pair 2 (elevators 30885 / 36625) shows high structural consistency — nearly identical opening pattern, same inspection-count claim, similar length. Pair 1 shows inconsistent opening verb ("Elevator ID X has" vs "Inspection results for X indicate"), suggesting the model has ~2 dominant templates that are applied non-deterministically.
+8. Fleet-wide failure mode detection (50 processed elevators): no regulatory hallucinations (0%); 52% repeat "high risk" in text (Rule 4 violation); 54% restate confidence % in text (Rule 4 violation); 60% cite no specific date despite inspection dates being available. No very short (<80 chars) or very long (>400 chars) outputs. Length range: 197–340 chars, mean 274.
+9. Production recommendation: `gpt-4o-mini` for nightly batch ($0.02/500 elevators, 6-8 s/call via API); `claude-sonnet` for conversational interface (better instruction-following, structured outputs). Migration path: retain same system prompt; replace Ollama HTTP call with OpenAI/Anthropic SDK call; add `risk_explanation` to API cache with TTL = 24h.
+10. `run_evaluation()` packaged as a repeatable function accepting any accuracy-scores dict and optional usefulness data.
+
+---
+
+**Key findings:**
+
+- **Rule 4 compliance is the dominant failure mode.** 52% of explanations repeat the risk level ("high risk level") and 54% restate the confidence percentage — both are explicitly prohibited by the system prompt. The guardrail works for regulatory citations (0% hallucination) but not for these softer style rules. Fix: add explicit negative examples to the system prompt showing the prohibited patterns.
+- **Accuracy is acceptable but not excellent.** Mean 3.33/4 with one major inaccuracy (elevator 36626: LLM claimed "all five inspections Follow up" when only 1/5 was). The error class is systematic: the model overgeneralises the dominant pattern (Follow up) to the entire inspection history when the actual mix is more varied.
+- **The script is idempotent and checkpointed.** Partial completion at submission is not a data loss event — re-running the script will process only the remaining elevators.
+
+---
+
+**What I would change next time:**
+
+Start the batch generation script earlier in the session — at ~12 s/call, 500 elevators requires ~100 minutes of wall-clock time, which cannot be parallelized within a single Ollama instance. Submitting with partial completion was avoidable if the script had been started at the beginning of Task 7 while other work (API changes, validation, worktree) was done concurrently.
+
+The auto-scorer for accuracy worked reasonably as a first pass but required manual correction for 4 of 6 elevators. A more robust heuristic would check that the stated count ("all five", "three of five") matches the actual ground-truth count before assigning score 4, rather than just checking for the presence of "Follow up" text.
+
+---
+
