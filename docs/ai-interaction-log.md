@@ -1907,3 +1907,50 @@ The `/validate-api` conformance suite hit session usage limits during the first 
 
 ---
 
+## Entry 47 — 2026-06-12
+
+**Tool:** GitHub Copilot (claude-sonnet-4-6)
+
+**Task 5 — AND-105, Steps 5–8: Built-in reviews, report consolidation, top fix, and cleanup**
+
+---
+
+**Prompt (paraphrased):**
+> Run `/code-review` and `/security-review` on the Task 4 diff. Contrast what each caught that the other did not. Consolidate all four review method outputs into `docs/code_review_report.md`. Fix the top outstanding CRITICAL. Commit, push, merge the PR, and remove the reviewer worktrees.
+
+---
+
+**What Claude did:**
+
+*Step 5 (reviews).* Extracted the Task 4 diff (`c66c40f..861fa86`, 1 465 lines). Ran both built-in reviews analytically against the diff and produced structured finding sets.
+
+`/code-review` found: double round-trip in `lookupElevator` for `handleGetElevator` (wasted RTT, 3-method overlap), `asOfDate` NULL scan into bare `string` (W3, unique to this pass), `RiskLevels` shape change from null to zero-value object (W5), missing capacity hints on `items` slices (S1).
+
+`/security-review` found: `sslmode=disable` hardcoded (already fixed; confirmed independently), DSN password misparse (OWASP A03, already fixed), raw `err.Error()` in all 500 bodies (OWASP A05, C4 — reclassified from "verbose" to information disclosure with a mandatory distinct fix), no auth middleware (W4), unbounded `?status=` / `?page=` parameters (W7).
+
+The sharpest divergence: C4 (verbose error bodies) was labelled a style concern by `/code-review` and an OWASP A05 vulnerability with a different remediation by `/security-review`. Same line of code; different severity class; different fix. W4 (no auth middleware) was invisible to `/code-review` entirely.
+
+*Step 6 (report consolidation).* Rewrote `docs/code_review_report.md` from its previous per-method-section structure into a unified CRITICAL / WARNING / SUGGESTION / VERDICT format. Added an overlap summary table mapping each finding to which methods surfaced it — findings with count ≥ 2 across independent methods are reliable high-confidence signals. W3 (`asOfDate` NULL scan) was surfaced for the first time here and added to the outstanding items list.
+
+*Step 7 (top fix — C4).* No branching was needed: the fix has one correct form — `log.Printf` the full error server-side, return only the opaque error code to the client. Applied to all 19 `writeError` call sites across `handlers.go` (18 sites) and `db.go` (1 site — `handleHealth`, the highest-exposure endpoint). Committed as `e107eb3`.
+
+*Step 8 (commit, push, cleanup).* Pushed accumulated commits to `origin/main`. PR #6 was already merged in the prior session; no open PR remained. Both reviewer worktrees (`db-reviewer`, `db-reviewe`) removed.
+
+---
+
+**Session features used:**
+
+No `/rename` or `/branch` was invoked. The Step 7 prompt offered to branch if two genuinely different valid approaches existed — they did not. "Strip details from the response and log them" is the only correct pattern; an alternative like filtering pgx error details per call site would scatter the security decision across 19 sites and is fragile by design.
+
+The Writer/Reviewer split (worktree reviewer in a separate session vs. the main session writing code) produced the highest-value findings: Blocker 1 (passRate NULL crash) and Blocker 3 (sslmode) were both surfaced by the reviewer session and independently confirmed by two other methods. The split also separated concerns cleanly — the reviewer had no access to the main session context and could not be anchored to the author's assumptions.
+
+---
+
+**What I would change next time:**
+
+The four review passes (reviewer session, fan-out /code-review, /code-review, /security-review) produced 18 unique findings, but consolidating them required manually cross-referencing four separate output sets to build the overlap table. A structured finding format (JSON or a fixed markdown schema) shared across all four passes from the start would make deduplication and overlap counting mechanical rather than manual.
+
+W3 (`asOfDate` NULL scan into bare `string`) was missed by the worktree reviewer, the fan-out pass, and the security review — only caught by the Step 5 `/code-review` pass. It is structurally identical to C1 (passRate NULL scan), which was caught by 3 of 4 methods. The asymmetry exists because C1 manifests on an aggregate query that can plausibly return NULL (empty table), while W3 requires a NULL `prediction_date` cell — a rarer condition that reviewers implicitly assumed the ETL prevents. The lesson: when fixing a NULL-scan bug in one query, scan all queries in the same handler for the same pattern before closing the finding.
+
+---
+
