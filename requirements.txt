@@ -1,0 +1,5 @@
+# AND-105 Task 3: ETL database driver
+# psycopg2-binary bundles its own libpq — no system Postgres install required.
+# For production deployments prefer psycopg2 (compiled against the system libpq)
+# to avoid binary compatibility surprises.
+psycopg2-binary>=2.9

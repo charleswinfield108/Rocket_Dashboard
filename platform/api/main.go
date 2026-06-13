@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type config struct {
@@ -45,20 +48,17 @@ func parseConfig() config {
 
 type server struct {
 	cfg config
+	db  *pgxpool.Pool
 
-	// Loaded at startup from CSV files. All maps are keyed by ElevatingDevicesNumber
-	// (exposed as "id" in JSON), except ordersByInsp which is keyed by InspectionNumber.
-	elevators         map[int]*elevatorRow
-	elevatorIDs       []int // stable insertion order for deterministic pagination
-	inspByElev        map[int][]*inspectionRow
-	ordersByInsp      map[int][]*orderRow
-	ordersByElev      map[int][]*orderRow
-	predictions       map[int]*predictionRow
-	predictionsLoaded bool
+	// order.csv is not in the DB schema; loaded at startup into two maps.
+	// ordersByInsp keyed by InspectionNumber; ordersByElev by ElevatingDevicesNumber.
+	ordersByInsp map[int][]*orderRow
+	ordersByElev map[int][]*orderRow
 }
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/elevators", s.handleListElevators)
 	mux.HandleFunc("GET /api/elevators/{id}", s.handleGetElevator)
 	mux.HandleFunc("GET /api/elevators/{id}/inspections", s.handleGetInspections)
@@ -84,21 +84,33 @@ func main() {
 		log.Fatalf("data directory not found at %q — set DATA_DIR to override", cfg.dataDir)
 	}
 
-	srv := &server{cfg: cfg}
-	if err := srv.loadData(); err != nil {
-		log.Fatal(err)
+	dbCfg, err := parseDBConfig()
+	if err != nil {
+		log.Fatalf("DB configuration error: %v", err)
 	}
+	pool, err := openDB(dbCfg)
+	if err != nil {
+		log.Fatalf("cannot connect to database: %v", err)
+	}
+	defer pool.Close()
 
-	log.Printf("loaded: %d elevators, %d inspection groups, %d order groups",
-		len(srv.elevators), len(srv.inspByElev), len(srv.ordersByElev))
-	if !srv.predictionsLoaded {
-		log.Printf("predictions.csv not found — GET /api/elevators/{id}/risk returns 503 until Task 6 generates it")
+	srv := &server{cfg: cfg, db: pool}
+	if err := srv.loadOrders(); err != nil {
+		log.Fatalf("loading order.csv: %v", err)
 	}
+	log.Printf("loaded: %d order groups from order.csv", len(srv.ordersByElev))
 
 	addr := fmt.Sprintf(":%s", cfg.port)
 	log.Printf("elevator fleet API listening on %s (data: %s)", addr, cfg.dataDir)
 
-	if err := http.ListenAndServe(addr, srv.routes()); err != nil {
+	httpSrv := &http.Server{
+		Addr:         addr,
+		Handler:      srv.routes(),
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

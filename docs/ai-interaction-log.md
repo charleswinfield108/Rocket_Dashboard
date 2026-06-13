@@ -1744,3 +1744,306 @@ File protection is exactly the class of action that should be a hook rather than
 
 ---
 
+## Entry 44 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+## AND-105 Task 3: ETL Migration — Data Transformations and Code Walkthrough
+
+---
+
+**Prompt (paraphrased):**
+> Write a Python ETL script that loads five source files into PostgreSQL. Apply all transformations from the Task 2 spec mapping. Handle dates, NULLs, orphan rows, and idempotency. Run it against the database and confirm row counts and re-run stability.
+
+---
+
+**What the script does — transformations:**
+
+*Date parsing.* Every date column uses a dedicated helper (`parse_date_dmy`, `parse_date_mdy`, `parse_date_iso`) that calls `datetime.strptime` with the format string confirmed in the Step 1 recon (`%d-%b-%y` for `dd-Mon-yy`, `%m/%d/%Y` for `M/D/YYYY`, `%I:%M:%S %p` for `H:MM:SS AM/PM`). Each helper returns a Python `datetime.date` (or `datetime.time`) object — psycopg2 serialises these as `DATE`/`TIME` literals on the wire, so PostgreSQL stores them as the correct type rather than a text string. A parse failure returns `None`, which psycopg2 sends as SQL `NULL`.
+
+*ON CONFLICT handling.* Every table uses `INSERT ... ON CONFLICT (pk_col) DO NOTHING`. The conflict target is the table's natural PK (`id` for four tables, `elevator_id` for predictions). This is safe because the Step 1 recon confirmed every source natural key is unique within its file — there are no source-side duplicates that would silently disappear into a conflict. To measure how many rows were actually new vs. already present, the script queries `COUNT(*)` before and after the bulk insert; the difference is `inserted` and the remainder is `conflict_skips`. On re-run, every row hits `ON CONFLICT` and is skipped, so `inserted = 0` and row counts are unchanged — the idempotency property the task requires.
+
+*JSON key extraction.* The JSON files are flat lists (no nesting or arrays). Keys are accessed via `r.get("key")` where the key string must match the source exactly, including unusual characters: `"Inspector's Conclusion"` contains an apostrophe (handled normally by Python string literals), and `"Alteration  Location"` has a double space (confirmed in Step 1 recon; the string literal in the script contains two spaces verbatim). Missing keys return `None` from `.get()`, which the `opt_str`/`opt_int`/`opt_float` helpers coerce to `None` → SQL `NULL`.
+
+*NULL handling.* Four helper functions centralise the coercion: `opt_str` strips whitespace and returns `None` for blank strings; `opt_int`/`opt_float` return `None` for `None` or unparseable input; `to_smallint` converts the incident injury floats (`0.0`, `1.0`, `2.0`, `3.0`) to `int` and passes `None` through unchanged. Any `None` in the tuple psycopg2 sends to PostgreSQL becomes a SQL `NULL`. Rows missing a `NOT NULL` column (e.g. `id`, `elevator_id`, `license_status`) are caught before building the tuple, logged to `stderr`, and added to the `skipped` counter rather than letting an `IntegrityError` abort the batch.
+
+*Orphan handling.* After `load_elevators` commits, each child loader calls `_get_elevator_ids(conn)` to fetch the set of integer elevator IDs now in the database. Any source row whose `elevator_id` is not in that set is logged and counted as an orphan skip — the FK violation is never sent to Postgres at all. The Step 1 recon predicted 195/1/9/145 orphan rows across the four child tables; the actual run produced exactly those counts, confirming the pre-filter logic and the recon counts.
+
+*Incident injury columns.* The 33 injury indicator columns (4 severity summaries + 29 specific types) are defined as `_INCIDENT_INJURY_MAP`, a module-level tuple of `(source_key, db_column)` pairs. The INSERT column list is built by joining the `db` side; the row tuple unpacks `*(to_smallint(r.get(src)) for src, _ in ...)` in the same iteration order. This guarantees the column list and tuple positions can never drift apart — changing the mapping constant updates both simultaneously.
+
+---
+
+**What I learned from reading the generated code:**
+
+`execute_values` from `psycopg2.extras` sends the entire batch in a single `INSERT ... VALUES (row1), (row2), ...` statement rather than one statement per row. The `page_size` parameter controls how many rows go into each statement — 1000 for most tables, 500 for incidents (which has 46 columns per row). The performance difference vs. row-by-row `execute()` is substantial: the entire 263k-row load finished in under 17 seconds.
+
+`cur.rowcount` after `execute_values` reflects only the last batch's affected count, not the total. This is why the script uses before/after `COUNT(*)` snapshots instead — it's the only reliable way to count total inserts across all batches when using `ON CONFLICT DO NOTHING`.
+
+The bootstrap_schema idempotency guard works by checking `pg_tables` for the `elevators` table before running the SQL file, because the DDL uses plain `CREATE TABLE` (not `IF NOT EXISTS`). Running the SQL twice without this guard would throw a `DuplicateTable` error and roll back. Checking for `elevators` as the sentinel is safe because all five tables were created in a single transaction — if `elevators` exists, all tables do.
+
+---
+
+**What I would change next time:**
+
+The `skipped` counter in the summary conflates two different kinds of skip: parse/validation failures (bad source data) and orphan skips (known FK exclusions). For a production ETL these should be reported separately so operations can distinguish data quality issues from expected exclusions. A `{"inserted": n, "parse_errors": n, "orphans": n, "conflicts": n}` breakdown per table would be cleaner than a single `skipped` number.
+
+---
+
+## Entry 45 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 4 — AND-105: PostgreSQL Migration, Step 6 — CSV Code Removal and Most Complex Query Conversion**
+
+---
+
+**Prompt (paraphrased):**
+> Remove all CSV-reading code from the Go server. The server must depend entirely on PostgreSQL. Delete all structs and loaders except those needed for order.csv. Redesign lookupElevator — it returned *elevatorRow from the in-memory map; that type no longer exists after removing elevatorRow. Build must be clean.
+
+---
+
+**What Claude did:**
+
+*Scope decision.* The five-table PostgreSQL schema (`elevators`, `inspections`, `predictions`, `licenses`, `incidents`) covers four of the five CSV sources. `order.csv` has no DB table — its data feeds the risk endpoint and is too deeply coupled to per-inspection enrichment to migrate without schema changes. The decision: keep `orderRow`, all CSV helpers (`readCSV`, `colIdx`, `cell`, `parseDate`, `optStr`, `optInt`, `mustInt`, `mustFloat`), and `loadOrders()`; delete everything else.
+
+*Removed from data.go:* `elevatorRow`, `inspectionRow`, `predictionRow` structs and their loaders (`loadElevators`, `loadInspections`, `loadPredictions`, `loadData`). One date layout (`"02-Jan-06"` for license.csv) removed from `dateLayouts` since no remaining code uses it.
+
+*Removed from main.go:* The `server` struct fields `elevators map[int]*elevatorRow`, `elevatorIDs []int`, `inspByElev map[int][]inspectionRow`, `predictions map[int]predictionRow`, `predictionsLoaded bool`. The call to `loadData()` replaced with `loadOrders()` called directly.
+
+*lookupElevator redesign.* The function formerly returned `(*elevatorRow, bool)` from the in-memory map. After `elevatorRow` was deleted, this was impossible. The redesign returns `(int, bool)` and queries `SELECT EXISTS(SELECT 1 FROM elevators WHERE id = $1)`. All three callers updated: variable renamed from `e` to `id`, all `e.ID` references replaced with `id`.
+
+*passOutcomes var removal.* After the fleet-stats and fleet-alerts handlers were migrated to SQL `IN` clauses in Step 4, the `passOutcomes []string` slice in handlers.go was left as dead code. Removed in Step 6.
+
+---
+
+**Most complex query conversion — handleFleetAlerts:**
+
+The original handler looped over `elevatorIDs`, looked up each elevator in three maps, and applied hard-coded thresholds in Go to decide which elevators to include in the alerts list. The equivalent SQL required expressing all of those cross-table conditions as a single query with a correlated subquery and a LATERAL join:
+
+```sql
+SELECT
+    e.id,
+    e.location,
+    e.device_type,
+    e.license_status,
+    p.risk_level,
+    TO_CHAR(li.latest_date, 'YYYY-MM-DD') AS last_inspection_date,
+    COALESCE(li.outcome, '')              AS last_inspection_outcome
+FROM elevators e
+JOIN predictions p ON p.elevator_id = e.id
+JOIN LATERAL (
+    SELECT latest_date, outcome
+    FROM   inspections
+    WHERE  elevator_id = e.id
+    ORDER  BY latest_date DESC NULLS LAST
+    LIMIT  1
+) li ON true
+WHERE
+    p.risk_level IN ('high', 'medium')
+    OR e.license_status NOT IN ('Active', 'Renewal in Progress')
+    OR li.latest_date < NOW() - INTERVAL '12 months'
+ORDER BY
+    CASE p.risk_level
+        WHEN 'high'   THEN 1
+        WHEN 'medium' THEN 2
+        ELSE               3
+    END,
+    e.id
+```
+
+The `JOIN LATERAL` replaces the per-elevator inspection lookup: for each elevator row, the lateral subquery selects the most recent inspection date and outcome. `NULLS LAST` handles elevators with no inspections. The `WHERE` clause directly encodes the three alert criteria that were previously three separate Go `if` statements. The `CASE` in `ORDER BY` replicates the Go sort that ordered high-risk alerts before medium before other. This moved approximately 60 lines of Go loop logic into 30 lines of SQL, with no intermediate slice allocation.
+
+---
+
+**What I would change next time:**
+
+The `lookupElevator` redesign added a `SELECT EXISTS` round-trip before every per-elevator endpoint. A post-merge code review (worktree reviewer, /code-review skill) later identified this as partially redundant: `handleGetElevator` and `handleGetRisk` both already handle `pgx.ErrNoRows` and could have the EXISTS check removed. Only `handleGetInspections` genuinely needs it, because an empty result set for an unknown elevator returns 200 + `[]` rather than 404. If I had considered the per-handler error handling before redesigning `lookupElevator`, I would have kept it only for `handleGetInspections` and let the other two handlers rely on their own `ErrNoRows` paths — saving one DB round-trip per request on two of the three per-elevator endpoints.
+
+---
+
+## Entry 46 — 2026-06-12
+
+**Tool:** Claude (claude-sonnet-4-6)
+
+**Task 5 — AND-105: Branch Reorganization, Multi-Source Code Review, and PR Creation**
+
+---
+
+**Prompt (paraphrased):**
+> Move the Task 4 commits off main onto a feature branch named database-integration. Create a PR with an AI-transparency description documenting exactly which files were generated by Claude vs hand-edited by me vs written manually. Run the worktree reviewer, /code-review, and /security-review. Consolidate findings into docs/code_review_report.md. Fix the top finding. Push and create the PR.
+
+---
+
+**What Claude did:**
+
+*Branch reorganization.* Discovered that `origin/main` was at commit `9499164` — only three of the six AND-105 commits had been pushed to origin, not the expected zero. Option A was chosen: reset local `main` to match `origin/main` at `9499164`, create `database-integration` from there with the four Task 4 commits. No force-push required.
+
+*Worktree reviewer.* Run as `claude --worktree db-reviewer` in a separate terminal session. Produced 4 blockers and 5 minors. Blocker 1 (passRate NULL scan) and Blocker 3 (sslmode=disable) became the two highest-priority items for the review cycle.
+
+*/code-review skill — 7-angle finder pass.* Seven independent finder agents ran in parallel: line-by-line diff scan (A), removed-behavior auditor (B), cross-file tracer (C), reuse/simplification/efficiency (D/E/F), and altitude (G). Each surfaced up to 6 candidates. After deduplication, 9 unique candidates entered the verifier pass.
+
+*/code-review skill — verifier pass.* Five per-candidate verifiers ran in parallel:
+- passRate NULL scan: **PLAUSIBLE** (empty table is a real but non-default state)
+- id aliasing in handleGetElevator: **REFUTED** (pgx.ErrNoRows never calls Scan; the corrupted-id path is structurally impossible)
+- No snapshot isolation in fleet-stats: **PLAUSIBLE** (ETL-only DB makes it unlikely; architecturally unsound)
+- sslmode=disable: **CONFIRMED**
+- Double-close on equipRows: **CONFIRMED** (explicit close is load-bearing; defer is misleading)
+
+Final output: 8 findings (1 REFUTED dropped). Most severe: passRate NULL crash.
+
+*Security review.* 10 findings across 7 dimensions: HIGH — raw pgx error strings leaked in all 500 responses (15 call sites expose table/column names); MEDIUM — sslmode hardcoded, no auth middleware, unbounded `?status=` string, unbounded `?page=` offset; LOW — fragile scan-error path in rows.Next() loop, DATA_DIR not confined to base path; INFO — all SQL uses $N bind params (no injection confirmed), pgx v5.10.0 pinned.
+
+*Top fix.* `var passRate float64` → `var passRate *float64`; `passRate := 0.0; if passRatePtr != nil { passRate = *passRatePtr }`. Prevents pgx scan error when inspections table is empty.
+
+*PR.* Committed fix + `docs/code_review_report.md` in one commit (`99efc09`). Branch pushed to `origin/database-integration`. PR #6 created and merged manually.
+
+---
+
+**What I would change next time:**
+
+The branch reorganization step lost the Step 6 working tree changes because `git reset --hard` was run while changes were uncommitted. Stashing before any branch operation and verifying stash contents before the reset would have prevented the complete re-application of all Step 6 edits from scratch.
+
+The `/validate-api` conformance suite hit session usage limits during the first run attempt. Running validators immediately after each endpoint is migrated (per-step) rather than batching all six at the end of Task 4 would catch regressions earlier and avoid the all-or-nothing dependency on session availability.
+
+---
+
+## Entry 48 — 2026-06-12
+
+**Task:** AND-105, Task 6 — Local LLM Risk Explanations Notebook (Ollama + PostgreSQL)
+
+**Prompt:**
+> Create `intelligence/risk_explanations.ipynb`. Install Ollama and pull a model. Query the database for the 10 highest-risk elevators. Design a system prompt with role definition, output format, domain context, and citation instructions. Try at least 3 variations. Use `/branch` to explore different prompt directions. Document Writer/Reviewer on prompt engineering in the notebook and log.
+
+**Techniques applied:**
+- *DB-grounded prompting.* Each Ollama call receives a structured user message built from live database rows: last 5 inspections, incidents in past 2 years, alterations. The system prompt defines what the risk score means (P(Follow up)) so the model can produce semantically correct explanations rather than generic safety text.
+- *`/branch` prompt exploration.* Three prompt variations were trialled on the same 3 elevators (ranks #1, #5, #10) before committing to a final design. Branching on prompt direction, not on code — the three branches were: minimal role only (V1), domain-rich context (V2), and explicit guardrails for missing data (V3).
+- *Writer/Reviewer on prompt engineering.* Writer produced V3 as the candidate. Reviewer identified 5 issues: TSSA hallucination anchor (R1), ambiguous sentence count for sparse data (R2), NULL date values appearing as "None" in user messages (R3), redundant risk level in opening sentence (R4), and unhandled unfamiliar predicted_outcome strings (R5). R1, R2, and R3 were accepted and corrected in the final prompt.
+
+**`/branch` comparison — what changed between directions:**
+
+| Branch | Characteristic failure | Why eliminated |
+|--------|----------------------|----------------|
+| V1 — minimal | Produced 4–6 sentence responses; hallucinated regulatory citations ("O. Reg. 209/01") from training data; used "may indicate" hedging | Too verbose; invented compliance references not in data |
+| V2 — domain-rich | Improved sentence quality; still hallucinated for elevators with no incident data ("lack of incidents may reflect underreporting") | Hallucination on empty fields unacceptable for safety dashboard |
+| V3 (final) | Consistent 2-sentence output; cites dates; states "no incidents on record" correctly | **Selected** — precision over fluency for ops dashboard context |
+
+**Key finding — model behaviour on empty fields:** All three prompt versions received elevators with `(no incidents in past 2 years)`. V1 and V2 filled this with plausible-sounding invented text. V3's explicit rule ("if field is absent, write 'no [field] on record'") eliminated this class of hallucination. This is the most important finding: for structured-data explanation tasks, explicit absence guardrails are mandatory, not optional.
+
+**Key finding — confidence score in output:** Despite Rule 4 ("do not repeat the risk level"), the model frequently restated the confidence percentage in its explanations (e.g., "85.8% confidence"). This did not violate the rule as written (which targeted the risk level label, not the score), but produced slightly redundant output. A revised rule in a future prompt version should explicitly exclude the confidence value as well.
+
+**Model choice rationale (for record):** `gemma2:2b` chosen over `llama3.1:8b` and `mistral:7b`. The 2B model produces coherent 1–3 sentence structured output at ~10–15 tok/s on CPU, completing the 10-elevator batch in approximately 2 minutes. Larger models produced marginally better prose but added 4–5× latency per call with no material improvement in data citation accuracy on this task. For a dashboard batch job, inference time matters.
+
+**What I would change next time:**
+
+The three-prompt trial ran all 9 calls (3 prompts × 3 elevators) sequentially before comparing outputs. Running two candidate prompts in parallel on the same elevator would have cut the exploration time in half and provided an immediate A/B comparison in a single output cell. For prompt engineering tasks with multiple variations, a parallel call pattern is worth the minor added complexity.
+
+The Reviewer pass was done after the 9-call trial, meaning the final prompt was designed before the Reviewer's R3 finding (NULL date → "None" in user message) was known. Running the Reviewer pass on V2 before running the trial would have caught R3 before any Ollama calls were made.
+
+---
+
+## Entry 47 — 2026-06-12
+
+**Tool:** GitHub Copilot (claude-sonnet-4-6)
+
+**Task 5 — AND-105, Steps 5–8: Built-in reviews, report consolidation, top fix, and cleanup**
+
+---
+
+**Prompt (paraphrased):**
+> Run `/code-review` and `/security-review` on the Task 4 diff. Contrast what each caught that the other did not. Consolidate all four review method outputs into `docs/code_review_report.md`. Fix the top outstanding CRITICAL. Commit, push, merge the PR, and remove the reviewer worktrees.
+
+---
+
+**What Claude did:**
+
+*Step 5 (reviews).* Extracted the Task 4 diff (`c66c40f..861fa86`, 1 465 lines). Ran both built-in reviews analytically against the diff and produced structured finding sets.
+
+`/code-review` found: double round-trip in `lookupElevator` for `handleGetElevator` (wasted RTT, 3-method overlap), `asOfDate` NULL scan into bare `string` (W3, unique to this pass), `RiskLevels` shape change from null to zero-value object (W5), missing capacity hints on `items` slices (S1).
+
+`/security-review` found: `sslmode=disable` hardcoded (already fixed; confirmed independently), DSN password misparse (OWASP A03, already fixed), raw `err.Error()` in all 500 bodies (OWASP A05, C4 — reclassified from "verbose" to information disclosure with a mandatory distinct fix), no auth middleware (W4), unbounded `?status=` / `?page=` parameters (W7).
+
+The sharpest divergence: C4 (verbose error bodies) was labelled a style concern by `/code-review` and an OWASP A05 vulnerability with a different remediation by `/security-review`. Same line of code; different severity class; different fix. W4 (no auth middleware) was invisible to `/code-review` entirely.
+
+*Step 6 (report consolidation).* Rewrote `docs/code_review_report.md` from its previous per-method-section structure into a unified CRITICAL / WARNING / SUGGESTION / VERDICT format. Added an overlap summary table mapping each finding to which methods surfaced it — findings with count ≥ 2 across independent methods are reliable high-confidence signals. W3 (`asOfDate` NULL scan) was surfaced for the first time here and added to the outstanding items list.
+
+*Step 7 (top fix — C4).* No branching was needed: the fix has one correct form — `log.Printf` the full error server-side, return only the opaque error code to the client. Applied to all 19 `writeError` call sites across `handlers.go` (18 sites) and `db.go` (1 site — `handleHealth`, the highest-exposure endpoint). Committed as `e107eb3`.
+
+*Step 8 (commit, push, cleanup).* Pushed accumulated commits to `origin/main`. PR #6 was already merged in the prior session; no open PR remained. Both reviewer worktrees (`db-reviewer`, `db-reviewe`) removed.
+
+---
+
+**Session features used:**
+
+No `/rename` or `/branch` was invoked. The Step 7 prompt offered to branch if two genuinely different valid approaches existed — they did not. "Strip details from the response and log them" is the only correct pattern; an alternative like filtering pgx error details per call site would scatter the security decision across 19 sites and is fragile by design.
+
+The Writer/Reviewer split (worktree reviewer in a separate session vs. the main session writing code) produced the highest-value findings: Blocker 1 (passRate NULL crash) and Blocker 3 (sslmode) were both surfaced by the reviewer session and independently confirmed by two other methods. The split also separated concerns cleanly — the reviewer had no access to the main session context and could not be anchored to the author's assumptions.
+
+---
+
+**What I would change next time:**
+
+The four review passes (reviewer session, fan-out /code-review, /code-review, /security-review) produced 18 unique findings, but consolidating them required manually cross-referencing four separate output sets to build the overlap table. A structured finding format (JSON or a fixed markdown schema) shared across all four passes from the start would make deduplication and overlap counting mechanical rather than manual.
+
+W3 (`asOfDate` NULL scan into bare `string`) was missed by the worktree reviewer, the fan-out pass, and the security review — only caught by the Step 5 `/code-review` pass. It is structurally identical to C1 (passRate NULL scan), which was caught by 3 of 4 methods. The asymmetry exists because C1 manifests on an aggregate query that can plausibly return NULL (empty table), while W3 requires a NULL `prediction_date` cell — a rarer condition that reviewers implicitly assumed the ETL prevents. The lesson: when fixing a NULL-scan bug in one query, scan all queries in the same handler for the same pattern before closing the finding.
+
+---
+
+## Entry 49 — 2026-06-12
+
+**Task:** AND-105, Tasks 7 & 8 — Batch Explanation Generation + Evaluation Notebook
+
+**Prompt (paraphrased):**
+> Task 7: create `intelligence/generate_explanations.py` — batch script connecting to PostgreSQL, querying top 500 elevators by risk_score, generating Ollama explanations, storing in `predictions.risk_explanation`. Progress reporting, elapsed time, retry-once-on-timeout error handling, idempotent. Go API `/api/elevators/{id}/risk` must return `risk_explanation`. Run `/validate-api`. Use `claude --worktree alt-explain` for alternative model/prompt comparison, document in AI Interaction Log. Task 8: create `intelligence/explanation_evaluation.ipynb` — 10 explanations evaluated with accuracy rubric, usefulness assessment, consistency analysis, failure mode detection, production recommendation, packaged as repeatable process.
+
+---
+
+**What Claude did:**
+
+*Task 7 — `generate_explanations.py`.* Script queries `predictions JOIN elevators ORDER BY risk_score DESC LIMIT 500`, skipping rows where `risk_explanation IS NOT NULL` (idempotency). For each elevator it fetches last 5 inspections, incidents within a `TWO_YEARS_AGO` cutoff, and last 5 alterations from PostgreSQL, assembles a structured user message, and calls Ollama (`gemma2:2b`) via HTTP. `generate_with_retry()` retries once on `requests.Timeout`; on a second failure the row is skipped with a `WARN` log. Progress is committed to the DB every 50 rows as a checkpoint, so partial runs are recoverable. A final verification query asserts 0 NULL rows remain across the top-500 set; if any remain the script exits with code 1. All parameters configurable via env vars (`OLLAMA_MODEL`, `BATCH_SIZE`, `OLLAMA_TIMEOUT`, `DB_*`). Script started at 23:23 and was still running at submission time (118/500 completed); the script is idempotent and will continue correctly after submission.
+
+*Task 7 — Go API `risk_explanation` field.* Added `RiskExplanation *string \`json:"risk_explanation"\`` to `riskResponse` struct in `platform/api/handlers.go`. Updated the `SELECT` query and `Scan()` call to populate the field. Rebuilt binary with `go build ./...` (BUILD OK). Updated `testdata/golden/risk_10.json` to include `"risk_explanation":null` (elevator 10 has risk_score=0.0296, outside top 500).
+
+*Task 7 — `/validate-api /api/elevators/27557/risk`.* All 13 testable dimensions PASS. CONFORMS verdict. `risk_explanation` field exempted from flagging per AND-105 Task 7 note. The 503/PREDICTIONS_UNAVAILABLE path skipped as untestable without stopping the server.
+
+*Task 7 — alt-explain worktree.* Created worktree at `.claude/worktrees/alt-explain` on branch `alt-explain`. Wrote `intelligence/alt_explain.py` using a structured chain-of-thought prompt: step-by-step framing, explicit "Sentence 2: inspectors should check…" requirement. Run on 10 elevators from the same high-risk set. Comparison:
+
+| Dimension | Main (V3 narrative) | Alt (structured chain-of-thought) |
+|-----------|--------------------|------------------------------------|
+| Speed | ~13 s/call | ~30 s/call (2× slower) |
+| Format | 1-2 sentences, free-form | 2 sentences, rigid structure |
+| Actionability | Low — observation only | High — "inspectors should check X, Y, Z" |
+| Rule compliance | Consistent | Occasionally violates (emits confidence % despite guardrail) |
+| Chosen for | Batch production (speed) | Conversational interface (future) |
+
+Main approach (V3 narrative) chosen for the batch job. Alt approach is preferred for a future conversational interface where actionability matters more than throughput.
+
+*Task 8 — `explanation_evaluation.ipynb`.* Eight-step evaluation notebook:
+1. DB connection + TWO_YEARS_AGO setup.
+2. Sample selection: ranks 1–4, 20, 50, 100, 200, 300, 400 by risk_score where `risk_explanation IS NOT NULL` (6 elevators available at execution time).
+3. Ground-truth prefetch (last 5 inspections, incidents, alterations per elevator).
+4. Side-by-side display: explanation vs ground-truth data for manual scoring.
+5. Auto-scoring with manual corrections applied in a separate cell. Rubric: 4=Fully Accurate, 3=Minor Inaccuracy, 2=Major Inaccuracy, 1=Hallucination. Results (n=6): 3× score 4, 2× score 3, 1× score 2. Mean = 3.33/4.0.
+6. Usefulness assessment: specificity 2.5/3, actionability 2.83/3, conciseness 3.0/3. Explanations are consistently concise; actionability is good; specificity varies by how much data the elevator has.
+7. Consistency analysis: 3 pairs of same-risk-level elevators with score diff < 0.005. Pair 2 (elevators 30885 / 36625) shows high structural consistency — nearly identical opening pattern, same inspection-count claim, similar length. Pair 1 shows inconsistent opening verb ("Elevator ID X has" vs "Inspection results for X indicate"), suggesting the model has ~2 dominant templates that are applied non-deterministically.
+8. Fleet-wide failure mode detection (50 processed elevators): no regulatory hallucinations (0%); 52% repeat "high risk" in text (Rule 4 violation); 54% restate confidence % in text (Rule 4 violation); 60% cite no specific date despite inspection dates being available. No very short (<80 chars) or very long (>400 chars) outputs. Length range: 197–340 chars, mean 274.
+9. Production recommendation: `gpt-4o-mini` for nightly batch ($0.02/500 elevators, 6-8 s/call via API); `claude-sonnet` for conversational interface (better instruction-following, structured outputs). Migration path: retain same system prompt; replace Ollama HTTP call with OpenAI/Anthropic SDK call; add `risk_explanation` to API cache with TTL = 24h.
+10. `run_evaluation()` packaged as a repeatable function accepting any accuracy-scores dict and optional usefulness data.
+
+---
+
+**Key findings:**
+
+- **Rule 4 compliance is the dominant failure mode.** 52% of explanations repeat the risk level ("high risk level") and 54% restate the confidence percentage — both are explicitly prohibited by the system prompt. The guardrail works for regulatory citations (0% hallucination) but not for these softer style rules. Fix: add explicit negative examples to the system prompt showing the prohibited patterns.
+- **Accuracy is acceptable but not excellent.** Mean 3.33/4 with one major inaccuracy (elevator 36626: LLM claimed "all five inspections Follow up" when only 1/5 was). The error class is systematic: the model overgeneralises the dominant pattern (Follow up) to the entire inspection history when the actual mix is more varied.
+- **The script is idempotent and checkpointed.** Partial completion at submission is not a data loss event — re-running the script will process only the remaining elevators.
+
+---
+
+**What I would change next time:**
+
+Start the batch generation script earlier in the session — at ~12 s/call, 500 elevators requires ~100 minutes of wall-clock time, which cannot be parallelized within a single Ollama instance. Submitting with partial completion was avoidable if the script had been started at the beginning of Task 7 while other work (API changes, validation, worktree) was done concurrently.
+
+The auto-scorer for accuracy worked reasonably as a first pass but required manual correction for 4 of 6 elevators. A more robust heuristic would check that the stated count ("all five", "three of five") matches the actual ground-truth count before assigning score 4, rather than just checking for the presence of "Follow up" text.
+
+---
+

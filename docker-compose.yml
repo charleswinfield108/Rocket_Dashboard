@@ -1,0 +1,47 @@
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready exits 0 only when the server is accepting connections.
+      # start_period gives Postgres time to initialise before retries begin.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Go API ────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .               # project root — Dockerfile needs access to data/
+      dockerfile: platform/api/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      # DB connection details forwarded for the later database-integration task.
+      # The current CSV-backed code does not read these; they are no-ops for now.
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy   # waits for pg_isready to pass before starting
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  pg_data:   # named volume persists DB data across container restarts
