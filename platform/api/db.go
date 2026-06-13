@@ -92,8 +92,8 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.db.Ping(ctx); err != nil {
-		s.writeError(w, http.StatusServiceUnavailable, "DB_UNAVAILABLE",
-			"database ping failed: "+err.Error())
+		log.Printf("handleHealth: %v", err)
+		s.writeError(w, http.StatusServiceUnavailable, "DB_UNAVAILABLE", "database unavailable")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "db": "connected"})

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -156,8 +157,8 @@ func (s *server) lookupElevator(w http.ResponseWriter, r *http.Request) (int, bo
 	if err := s.db.QueryRow(r.Context(),
 		`SELECT EXISTS(SELECT 1 FROM elevators WHERE id = $1)`, id,
 	).Scan(&exists); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to look up elevator: "+err.Error())
+		log.Printf("lookupElevator id=%d: %v", id, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return 0, false
 	}
 	if !exists {
@@ -214,8 +215,8 @@ WHERE $1 = '' OR license_status = $1`
 
 	var total int
 	if err := s.db.QueryRow(ctx, countQ, statusFilter).Scan(&total); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to count elevators: "+err.Error())
+		log.Printf("handleListElevators: count: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -245,8 +246,8 @@ LIMIT $2 OFFSET $3`
 
 	rows, err := s.db.Query(ctx, listQ, statusFilter, limit, (page-1)*limit)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query elevators: "+err.Error())
+		log.Printf("handleListElevators: list query: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	defer rows.Close()
@@ -267,8 +268,8 @@ LIMIT $2 OFFSET $3`
 		if err := rows.Scan(&id, &location, &deviceType, &deviceStatus,
 			&licenseStatus, &licenseExpiry, &latestInspectionDate,
 			&latestInspectionOutcome, &riskLevel); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"failed to scan elevator: "+err.Error())
+			log.Printf("handleListElevators: scan: %v", err)
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 			return
 		}
 		items = append(items, fleetItem{
@@ -284,8 +285,8 @@ LIMIT $2 OFFSET $3`
 		})
 	}
 	if err := rows.Err(); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to iterate elevators: "+err.Error())
+		log.Printf("handleListElevators: rows.Err: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -403,8 +404,8 @@ WHERE e.id = $1`
 				"no elevator found with id "+strconv.Itoa(id))
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query elevator: "+err.Error())
+		log.Printf("handleGetElevator id=%d: %v", id, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -458,8 +459,8 @@ ORDER BY i.latest_date DESC NULLS LAST`
 
 	rows, err := s.db.Query(r.Context(), q, id)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query inspections: "+err.Error())
+		log.Printf("handleGetInspections id=%d: query: %v", id, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	defer rows.Close()
@@ -478,8 +479,8 @@ ORDER BY i.latest_date DESC NULLS LAST`
 		)
 		if err := rows.Scan(&inspNum, &svcReq, &customer, &inspType,
 			&location, &earliest, &latest, &outcome); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"failed to scan inspection row: "+err.Error())
+			log.Printf("handleGetInspections id=%d: scan: %v", id, err)
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 			return
 		}
 
@@ -510,8 +511,8 @@ ORDER BY i.latest_date DESC NULLS LAST`
 		})
 	}
 	if err := rows.Err(); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to iterate inspection rows: "+err.Error())
+		log.Printf("handleGetInspections id=%d: rows.Err: %v", id, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -605,8 +606,8 @@ WHERE elevator_id = $1`
 				"no prediction row available for elevator "+strconv.Itoa(id))
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query predictions: "+err.Error())
+		log.Printf("handleGetRisk id=%d: %v", id, err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -694,8 +695,8 @@ GROUP BY device_type`
 
 	equipRows, err := s.db.Query(ctx, equipQ)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query equipment types: "+err.Error())
+		log.Printf("handleFleetStats: equipment query: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	defer equipRows.Close()
@@ -706,8 +707,8 @@ GROUP BY device_type`
 		var dt string
 		var cnt int
 		if err := equipRows.Scan(&dt, &cnt); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"failed to scan equipment type: "+err.Error())
+			log.Printf("handleFleetStats: equipment scan: %v", err)
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 			return
 		}
 		if dt != "" {
@@ -716,8 +717,8 @@ GROUP BY device_type`
 		totalElevators += cnt
 	}
 	if err := equipRows.Err(); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to iterate equipment types: "+err.Error())
+		log.Printf("handleFleetStats: equipment rows.Err: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	equipRows.Close()
@@ -740,8 +741,8 @@ FROM inspections`
 	var totalInsp int
 	var passRatePtr *float64 // nullable: NULLIF returns NULL when inspections table is empty
 	if err := s.db.QueryRow(ctx, inspQ).Scan(&totalInsp, &passRatePtr); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query inspection stats: "+err.Error())
+		log.Printf("handleFleetStats: inspection stats: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	passRate := 0.0
@@ -763,8 +764,8 @@ FROM predictions`
 	if err := s.db.QueryRow(ctx, riskQ).Scan(
 		&counts.High, &counts.Medium, &counts.Low, &counts.Unscored,
 	); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query risk levels: "+err.Error())
+		log.Printf("handleFleetStats: risk levels: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
@@ -820,8 +821,8 @@ ORDER BY p.risk_score DESC`
 
 	rows, err := s.db.Query(r.Context(), q)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to query fleet alerts: "+err.Error())
+		log.Printf("handleFleetAlerts: query: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 	defer rows.Close()
@@ -838,8 +839,8 @@ ORDER BY p.risk_score DESC`
 		)
 		if err := rows.Scan(&elevID, &riskScore, &riskLevel,
 			&lastDate, &lastOut, &equipType); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"failed to scan alert row: "+err.Error())
+			log.Printf("handleFleetAlerts: scan: %v", err)
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 			return
 		}
 		alerts = append(alerts, alertItem{
@@ -852,8 +853,8 @@ ORDER BY p.risk_score DESC`
 		})
 	}
 	if err := rows.Err(); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"failed to iterate alert rows: "+err.Error())
+		log.Printf("handleFleetAlerts: rows.Err: %v", err)
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal error")
 		return
 	}
 
