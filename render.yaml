@@ -36,7 +36,7 @@ services:
     name: rocketdash-dashboard
     runtime: python
     buildCommand: pip install -r platform/requirements.txt
-    startCommand: gunicorn --chdir platform server:app --bind 0.0.0.0:$PORT
+    startCommand: gunicorn --chdir platform server:app --bind 0.0.0.0:$PORT --timeout 120
     plan: free
     envVars:
       - key: GO_API_URL
