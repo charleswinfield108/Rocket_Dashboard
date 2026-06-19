@@ -7,7 +7,8 @@ import pandas as pd  # kept only for incident.json / altered.json (JSON, not CSV
 
 app = Flask(__name__)
 
-GO_API = os.environ.get("GO_API_URL", "http://localhost:8081").rstrip("/")
+_go_api_raw = os.environ.get("GO_API_URL", "http://localhost:8081").rstrip("/")
+GO_API = _go_api_raw if _go_api_raw.startswith("http") else f"https://{_go_api_raw}"
 BASE   = Path(__file__).parent
 
 # ── Risk helpers ───────────────────────────────────────────────────────────────

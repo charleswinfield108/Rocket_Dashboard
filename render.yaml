@@ -43,4 +43,4 @@ services:
         fromService:
           name: rocketdash-api
           type: web
-          property: url
+          property: host
