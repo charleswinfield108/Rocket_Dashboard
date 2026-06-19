@@ -1,0 +1,46 @@
+databases:
+  - name: rocketdash-db
+    databaseName: rocketdash
+    user: rocketdash
+    plan: free
+
+services:
+  - type: web
+    name: rocketdash-api
+    runtime: docker
+    dockerfilePath: platform/api/Dockerfile
+    plan: free
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: rocketdash-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: rocketdash-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: rocketdash-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: rocketdash-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: rocketdash-db
+          property: password
+
+  - type: web
+    name: rocketdash-dashboard
+    runtime: python
+    buildCommand: pip install -r platform/requirements.txt
+    startCommand: gunicorn --chdir platform server:app --bind 0.0.0.0:$PORT
+    plan: free
+    envVars:
+      - key: GO_API_URL
+        fromService:
+          name: rocketdash-api
+          type: web
+          property: url

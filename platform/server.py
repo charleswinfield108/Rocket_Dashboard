@@ -2,11 +2,12 @@ from flask import Flask, request, render_template, make_response
 import requests as http_client
 from pathlib import Path
 from datetime import date, timedelta
+import os
 import pandas as pd  # kept only for incident.json / altered.json (JSON, not CSV)
 
 app = Flask(__name__)
 
-GO_API = "http://localhost:8081"
+GO_API = os.environ.get("GO_API_URL", "http://localhost:8081").rstrip("/")
 BASE   = Path(__file__).parent
 
 # ── Risk helpers ───────────────────────────────────────────────────────────────
