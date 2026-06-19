@@ -182,6 +182,24 @@ def build_rows(elevators):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.route("/debug-cache")
+def debug_cache():
+    import json as _json
+    try:
+        resp = http_client.get(f"{GO_API}/api/elevators", params={"page": 1, "limit": 1}, timeout=10)
+        api_status = resp.status_code
+        api_body = resp.text[:200]
+    except Exception as e:
+        api_status = "ERROR"
+        api_body = str(e)
+    return _json.dumps({
+        "GO_API": GO_API,
+        "cache_size": len(_ELEVATORS),
+        "api_status": api_status,
+        "api_body": api_body,
+    }), 200, {"Content-Type": "application/json"}
+
+
 @app.route("/")
 def index():
     _ensure_cache()
