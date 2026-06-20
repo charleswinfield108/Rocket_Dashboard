@@ -3,6 +3,7 @@ import requests as http_client
 from pathlib import Path
 from datetime import date, timedelta
 import os
+import threading
 import pandas as pd  # kept only for incident.json / altered.json (JSON, not CSV)
 
 app = Flask(__name__)
@@ -54,7 +55,12 @@ def extract_city(loc):
     return parts[-5].title() if len(parts) >= 5 else None
 
 
-# ── Elevator cache (loaded from Go API at startup) ────────────────────────────
+# ── Elevator cache (loaded in background thread to avoid blocking startup) ────
+
+_ELEVATORS = []
+CITIES     = []
+STATUSES   = []
+_cache_lock = threading.Lock()
 
 def _load_elevator_cache():
     """Fetch all elevators from Go API, paginating through every page."""
@@ -65,7 +71,7 @@ def _load_elevator_cache():
             resp = http_client.get(
                 f"{GO_API}/api/elevators",
                 params={"page": page, "limit": 500},
-                timeout=10,
+                timeout=15,
             )
             if resp.status_code != 200:
                 break
@@ -76,25 +82,26 @@ def _load_elevator_cache():
                 break
             page += 1
     except http_client.exceptions.RequestException:
-        pass  # Go API not up yet — start with empty cache
+        pass
     for e in elevators:
         e["_city"] = extract_city(e.get("location", ""))
     return elevators
 
 
-_ELEVATORS = _load_elevator_cache()
-CITIES     = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
-STATUSES   = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
+def _populate_cache():
+    global _ELEVATORS, CITIES, STATUSES
+    data = _load_elevator_cache()
+    with _cache_lock:
+        _ELEVATORS = data
+        CITIES   = sorted({e["_city"] for e in data if e.get("_city")})
+        STATUSES = sorted({e["license_status"] for e in data if e.get("license_status")})
+
+
+threading.Thread(target=_populate_cache, daemon=True).start()
 
 
 def _ensure_cache():
-    """If the cache loaded empty at startup, retry now. No-op when populated."""
-    global _ELEVATORS, CITIES, STATUSES
-    if _ELEVATORS:
-        return
-    _ELEVATORS = _load_elevator_cache()
-    CITIES   = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
-    STATUSES = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
+    pass  # cache loads in background; routes read _ELEVATORS directly
 
 
 # ── Summary statistics (computed once from cache) ─────────────────────────────
