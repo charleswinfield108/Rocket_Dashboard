@@ -58,9 +58,46 @@ def extract_city(loc):
 # ── Elevator cache (loaded in background thread to avoid blocking startup) ────
 
 def _load_elevator_cache():
-    """Fetch all elevators from Go API, paginating through every page."""
-    elevators = []
-    page = 1
+    """Load all elevators via a single PostgreSQL query (fast) or fall back to Go API."""
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(db_url)
+            cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT
+                    e.id,
+                    e.location,
+                    e.device_type,
+                    e.device_status,
+                    e.license_status,
+                    TO_CHAR(e.license_expiry, 'YYYY-MM-DD')      AS license_expiry,
+                    TO_CHAR(li.latest_date,   'YYYY-MM-DD')      AS latest_inspection_date,
+                    li.outcome                                    AS latest_inspection_outcome,
+                    p.risk_level
+                FROM elevators e
+                LEFT JOIN LATERAL (
+                    SELECT latest_date, outcome
+                    FROM   inspections
+                    WHERE  elevator_id = e.id
+                    ORDER  BY latest_date DESC NULLS LAST
+                    LIMIT  1
+                ) li ON true
+                LEFT JOIN predictions p ON p.elevator_id = e.id
+                ORDER BY e.id
+            """)
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.close(); conn.close()
+            for r in rows:
+                r["_city"] = extract_city(r.get("location", ""))
+            return rows
+        except Exception:
+            pass  # fall through to Go API
+
+    # fallback: paginate Go API
+    elevators, page = [], 1
     try:
         while True:
             resp = http_client.get(

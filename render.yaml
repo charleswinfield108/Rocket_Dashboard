@@ -44,3 +44,7 @@ services:
           name: rocketdash-api
           type: web
           property: host
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rocketdash-db
+          property: connectionString
