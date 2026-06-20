@@ -57,11 +57,6 @@ def extract_city(loc):
 
 # ── Elevator cache (loaded in background thread to avoid blocking startup) ────
 
-_ELEVATORS = []
-CITIES     = []
-STATUSES   = []
-_cache_lock = threading.Lock()
-
 def _load_elevator_cache():
     """Fetch all elevators from Go API, paginating through every page."""
     elevators = []
@@ -88,20 +83,18 @@ def _load_elevator_cache():
     return elevators
 
 
-def _populate_cache():
-    global _ELEVATORS, CITIES, STATUSES
-    data = _load_elevator_cache()
-    with _cache_lock:
-        _ELEVATORS = data
-        CITIES   = sorted({e["_city"] for e in data if e.get("_city")})
-        STATUSES = sorted({e["license_status"] for e in data if e.get("license_status")})
-
-
-threading.Thread(target=_populate_cache, daemon=True).start()
+_ELEVATORS = _load_elevator_cache()
+CITIES     = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
+STATUSES   = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
 
 
 def _ensure_cache():
-    pass  # cache loads in background; routes read _ELEVATORS directly
+    global _ELEVATORS, CITIES, STATUSES
+    if _ELEVATORS:
+        return
+    _ELEVATORS = _load_elevator_cache()
+    CITIES   = sorted({e["_city"] for e in _ELEVATORS if e.get("_city")})
+    STATUSES = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_status")})
 
 
 # ── Summary statistics (computed once from cache) ─────────────────────────────
