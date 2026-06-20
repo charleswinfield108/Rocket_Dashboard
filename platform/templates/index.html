@@ -320,6 +320,7 @@
       new Date().toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
     // ── Chat widget ───────────────────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", function() {
     const chatToggle  = document.getElementById("chat-toggle");
     const chatPanel   = document.getElementById("chat-panel");
     const chatClose   = document.getElementById("chat-close");
@@ -384,6 +385,7 @@
 
     chatSend.addEventListener("click", sendMessage);
     chatInput.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    }); // end DOMContentLoaded
   </script>
 
   <!-- ── Chat widget UI ──────────────────────────────────────────────────── -->
