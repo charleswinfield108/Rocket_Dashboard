@@ -601,13 +601,13 @@ def _fleet_stats_from_db():
 
 @app.route("/fleet-health")
 def fleet_health():
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
+    s = None
+    if os.environ.get("DATABASE_URL"):
         try:
             s = _fleet_stats_from_db()
         except Exception:
-            return _panel_error("Fleet Health"), 503
-    else:
+            pass
+    if s is None:
         try:
             resp = http_client.get(f"{GO_API}/api/fleet/stats", timeout=10)
             if resp.status_code != 200:
@@ -692,18 +692,16 @@ def _fleet_alerts_from_db(limit=20):
 
 @app.route("/fleet-alerts")
 def fleet_alerts():
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
+    alerts = None
+    if os.environ.get("DATABASE_URL"):
         try:
             alerts = _fleet_alerts_from_db()
         except Exception:
-            return _panel_error("Alerts"), 503
-    else:
+            pass
+    if alerts is None:
         try:
             resp = http_client.get(f"{GO_API}/api/fleet/alerts", timeout=10)
-            if resp.status_code == 503:
-                return _panel_error("Alerts"), 503
-            if resp.status_code != 200:
+            if resp.status_code not in (200,):
                 return _panel_error("Alerts"), 502
             alerts = resp.json()
         except http_client.exceptions.RequestException:
