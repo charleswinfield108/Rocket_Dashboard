@@ -62,11 +62,20 @@ When a **Follow-up** outcome is issued:
 2. The contractor completes the required work.
 3. A follow-up inspection is scheduled. Some deficiencies allow the device to remain in service; others require it to be removed from service immediately.
 
+When a **Shutdown** order is issued, the full return-to-service sequence is:
+1. Immediately take the device out of service and secure access.
+2. Notify the licensed contractor to diagnose all cited deficiencies.
+3. Complete all required repairs with documentation.
+4. If TSSA requires it, have a licensed engineer certify the repairs.
+5. Submit repair documentation to TSSA.
+6. Schedule a TSSA re-inspection to verify all corrections.
+7. Do not return the device to service until TSSA provides written clearance.
+
 ### Compliance Orders
 TSSA issues compliance orders to require corrective action. Orders are classified by urgency:
 - **Immediate** — device must be shut down and deficiency corrected before returning to service. Non-negotiable.
-- **30-day** — deficiency must be corrected within 30 days. Failure to comply triggers escalation.
-- **90-day** — lower-urgency deficiency; 90-day correction window.
+- **30-day** — deficiency must be corrected within 30 days. Failure to comply triggers escalation. Always address before 90-day orders.
+- **90-day** — lower-urgency deficiency; 90-day correction window. Address after all Immediate and 30-day orders are resolved.
 - **Annual** — systemic or non-critical items requiring correction at the next periodic inspection.
 
 When prioritizing work, always address **Immediate** orders first, then **30-day**, then **90-day**.
