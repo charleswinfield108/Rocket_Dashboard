@@ -229,11 +229,29 @@ def debug_cache():
     except Exception as e:
         api_status = "ERROR"
         api_body = str(e)
+
+    db_status = "not set"
+    db_count  = None
+    db_url    = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url)
+            cur  = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM elevators")
+            db_count  = cur.fetchone()[0]
+            cur.close(); conn.close()
+            db_status = "ok"
+        except Exception as e:
+            db_status = str(e)
+
     return _json.dumps({
-        "GO_API": GO_API,
+        "GO_API":     GO_API,
         "cache_size": len(_ELEVATORS),
+        "db_status":  db_status,
+        "db_count":   db_count,
         "api_status": api_status,
-        "api_body": api_body,
+        "api_body":   api_body,
     }), 200, {"Content-Type": "application/json"}
 
 
