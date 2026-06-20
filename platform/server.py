@@ -659,5 +659,19 @@ def fleet_alerts():
 """
 
 
+@app.route("/api/chat", methods=["POST"])
+def chat_proxy():
+    """Proxy chat requests from the browser to the Go API (which calls Ollama)."""
+    try:
+        resp = http_client.post(
+            f"{GO_API}/api/chat",
+            json=request.get_json(),
+            timeout=60,
+        )
+        return resp.content, resp.status_code, {"Content-Type": "application/json"}
+    except http_client.exceptions.RequestException as e:
+        return {"error": "chat service unavailable"}, 503
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
