@@ -546,15 +546,57 @@ def elevator_detail(elevator_id):
 
 # ── Fleet health panel (Component 3) ─────────────────────────────────────────
 
+def _fleet_stats_from_db():
+    """Query fleet stats directly from PostgreSQL. Returns dict matching Go API shape."""
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT
+            (SELECT COUNT(*)                FROM elevators)    AS total_elevators,
+            (SELECT COUNT(*)                FROM inspections)  AS total_inspections,
+            (SELECT COUNT(*) FROM inspections
+             WHERE outcome IN ('Passed','Passed Major','Passed Sub',
+                               'All Orders Resolved','Complete'))  AS passed_inspections,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'high')   AS high_risk,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'medium') AS medium_risk,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'low')    AS low_risk,
+            (SELECT COUNT(*) FROM elevators e
+             WHERE NOT EXISTS (SELECT 1 FROM predictions p WHERE p.elevator_id = e.id)) AS unscored
+    """)
+    row = dict(cur.fetchone())
+    cur.close(); conn.close()
+    total = row["total_inspections"] or 1
+    return {
+        "total_elevators":      int(row["total_elevators"]),
+        "total_inspections":    int(row["total_inspections"]),
+        "inspection_pass_rate": round(int(row["passed_inspections"]) / total, 4),
+        "risk_levels": {
+            "high":     int(row["high_risk"]),
+            "medium":   int(row["medium_risk"]),
+            "low":      int(row["low_risk"]),
+            "unscored": int(row["unscored"]),
+        },
+    }
+
+
 @app.route("/fleet-health")
 def fleet_health():
-    try:
-        resp = http_client.get(f"{GO_API}/api/fleet/stats", timeout=3)
-        if resp.status_code != 200:
-            return _panel_error("Fleet Health"), 502
-        s = resp.json()
-    except http_client.exceptions.RequestException:
-        return _panel_error("Fleet Health"), 503
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            s = _fleet_stats_from_db()
+        except Exception:
+            return _panel_error("Fleet Health"), 503
+    else:
+        try:
+            resp = http_client.get(f"{GO_API}/api/fleet/stats", timeout=10)
+            if resp.status_code != 200:
+                return _panel_error("Fleet Health"), 502
+            s = resp.json()
+        except http_client.exceptions.RequestException:
+            return _panel_error("Fleet Health"), 503
 
     rl   = s.get("risk_levels") or {}
     high = rl.get("high", 0)
@@ -599,17 +641,55 @@ def fleet_health():
 
 # ── Alerts section (Component 4) ─────────────────────────────────────────────
 
+def _fleet_alerts_from_db(limit=20):
+    """Query high-risk alerts directly from PostgreSQL."""
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT
+            p.elevator_id,
+            p.risk_score,
+            TO_CHAR(li.latest_date, 'YYYY-MM-DD') AS last_inspection_date,
+            li.outcome                             AS last_inspection_outcome,
+            e.device_type                          AS equipment_type
+        FROM predictions p
+        JOIN elevators e ON e.id = p.elevator_id
+        LEFT JOIN LATERAL (
+            SELECT latest_date, outcome
+            FROM   inspections
+            WHERE  elevator_id = p.elevator_id
+            ORDER  BY latest_date DESC NULLS LAST
+            LIMIT  1
+        ) li ON true
+        WHERE p.risk_level = 'high'
+        ORDER BY p.risk_score DESC
+        LIMIT %s
+    """, (limit,))
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return rows
+
+
 @app.route("/fleet-alerts")
 def fleet_alerts():
-    try:
-        resp = http_client.get(f"{GO_API}/api/fleet/alerts", timeout=3)
-        if resp.status_code == 503:
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            alerts = _fleet_alerts_from_db()
+        except Exception:
             return _panel_error("Alerts"), 503
-        if resp.status_code != 200:
-            return _panel_error("Alerts"), 502
-        alerts = resp.json()
-    except http_client.exceptions.RequestException:
-        return _panel_error("Alerts"), 503
+    else:
+        try:
+            resp = http_client.get(f"{GO_API}/api/fleet/alerts", timeout=10)
+            if resp.status_code == 503:
+                return _panel_error("Alerts"), 503
+            if resp.status_code != 200:
+                return _panel_error("Alerts"), 502
+            alerts = resp.json()
+        except http_client.exceptions.RequestException:
+            return _panel_error("Alerts"), 503
 
     if not alerts:
         return (
