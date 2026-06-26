@@ -8,3 +8,4 @@ platform/api/api_server
 # Python bytecode caches
 **/__pycache__/
 *.pyc
+platform/mcp/rocket_elevators_mcp.egg-info/
