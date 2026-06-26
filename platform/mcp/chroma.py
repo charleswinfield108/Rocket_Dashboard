@@ -10,21 +10,28 @@ Usage:
 
 The client is initialised lazily on first call and reused across tool invocations.
 CHROMA_PATH must be set in the environment (or via .env) before calling get_client().
-It defaults to ./chroma_data if not set.
+Defaults to rag/chroma_data/ (same default as rag/ingest.py) if not set.
 """
 
+from __future__ import annotations
+
 import os
+from pathlib import Path
+
 import chromadb
-from chromadb import PersistentClient
 
-_client: PersistentClient | None = None
+_client: chromadb.PersistentClient | None = None
+
+# Default: rag/chroma_data/ next to this file, matching ingest.py's default.
+# Override with CHROMA_PATH env var (e.g. on Render).
+_DEFAULT_CHROMA_PATH = str(Path(__file__).parent / "rag" / "chroma_data")
 
 
-def get_client() -> PersistentClient:
+def get_client() -> chromadb.PersistentClient:
     """Return the shared ChromaDB client, creating it on first call."""
     global _client
     if _client is None:
-        path = os.environ.get("CHROMA_PATH", "./chroma_data")
+        path = os.environ.get("CHROMA_PATH", _DEFAULT_CHROMA_PATH)
         _client = chromadb.PersistentClient(path=path)
     return _client
 
