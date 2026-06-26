@@ -24,6 +24,12 @@ from tools.elevators import (
     get_incidents_for_elevator,
     list_followup_elevators,
 )
+from tools.additional import (
+    list_expiring_licences,
+    list_overdue_inspections,
+    get_incident_root_cause_summary,
+    list_alterations_pending_followup,
+)
 
 load_dotenv()  # no-op if .env is absent (e.g. on Render)
 
@@ -34,6 +40,10 @@ mcp.add_tool(get_inspection_history)
 mcp.add_tool(count_incidents)
 mcp.add_tool(get_incidents_for_elevator)
 mcp.add_tool(list_followup_elevators)
+mcp.add_tool(list_expiring_licences)
+mcp.add_tool(list_overdue_inspections)
+mcp.add_tool(get_incident_root_cause_summary)
+mcp.add_tool(list_alterations_pending_followup)
 
 
 def main() -> None:
