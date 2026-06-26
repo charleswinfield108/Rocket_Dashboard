@@ -1,0 +1,9 @@
+mcp[cli]>=1.0
+psycopg[binary]>=3.1
+psycopg-pool>=3.1
+chromadb>=0.5
+python-dotenv>=1.0
+
+[dev]
+pytest>=8.0
+pytest-asyncio>=0.23
