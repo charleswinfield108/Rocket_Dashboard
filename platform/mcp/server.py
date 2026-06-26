@@ -30,6 +30,7 @@ from tools.additional import (
     get_incident_root_cause_summary,
     list_alterations_pending_followup,
 )
+from tools.predictions import get_risk_explanation
 
 load_dotenv()  # no-op if .env is absent (e.g. on Render)
 
@@ -44,6 +45,7 @@ mcp.add_tool(list_expiring_licences)
 mcp.add_tool(list_overdue_inspections)
 mcp.add_tool(get_incident_root_cause_summary)
 mcp.add_tool(list_alterations_pending_followup)
+mcp.add_tool(get_risk_explanation)
 
 
 def main() -> None:
