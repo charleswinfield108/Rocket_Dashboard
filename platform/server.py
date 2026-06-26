@@ -2,11 +2,14 @@ from flask import Flask, request, render_template, make_response
 import requests as http_client
 from pathlib import Path
 from datetime import date, timedelta
+import os
+import threading
 import pandas as pd  # kept only for incident.json / altered.json (JSON, not CSV)
 
 app = Flask(__name__)
 
-GO_API = "http://localhost:8081"
+_go_api_raw = os.environ.get("GO_API_URL", "http://localhost:8081").rstrip("/")
+GO_API = _go_api_raw if _go_api_raw.startswith("http") else f"https://{_go_api_raw}"
 BASE   = Path(__file__).parent
 
 # ── Risk helpers ───────────────────────────────────────────────────────────────
@@ -52,18 +55,55 @@ def extract_city(loc):
     return parts[-5].title() if len(parts) >= 5 else None
 
 
-# ── Elevator cache (loaded from Go API at startup) ────────────────────────────
+# ── Elevator cache (loaded in background thread to avoid blocking startup) ────
 
 def _load_elevator_cache():
-    """Fetch all elevators from Go API, paginating through every page."""
-    elevators = []
-    page = 1
+    """Load all elevators via a single PostgreSQL query (fast) or fall back to Go API."""
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(db_url)
+            cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("""
+                SELECT
+                    e.id,
+                    e.location,
+                    e.device_type,
+                    e.device_status,
+                    e.license_status,
+                    TO_CHAR(e.license_expiry, 'YYYY-MM-DD')      AS license_expiry,
+                    TO_CHAR(li.latest_date,   'YYYY-MM-DD')      AS latest_inspection_date,
+                    li.outcome                                    AS latest_inspection_outcome,
+                    p.risk_level
+                FROM elevators e
+                LEFT JOIN LATERAL (
+                    SELECT latest_date, outcome
+                    FROM   inspections
+                    WHERE  elevator_id = e.id
+                    ORDER  BY latest_date DESC NULLS LAST
+                    LIMIT  1
+                ) li ON true
+                LEFT JOIN predictions p ON p.elevator_id = e.id
+                ORDER BY e.id
+            """)
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.close(); conn.close()
+            for r in rows:
+                r["_city"] = extract_city(r.get("location", ""))
+            return rows
+        except Exception:
+            pass  # fall through to Go API
+
+    # fallback: paginate Go API
+    elevators, page = [], 1
     try:
         while True:
             resp = http_client.get(
                 f"{GO_API}/api/elevators",
                 params={"page": page, "limit": 500},
-                timeout=10,
+                timeout=15,
             )
             if resp.status_code != 200:
                 break
@@ -74,7 +114,7 @@ def _load_elevator_cache():
                 break
             page += 1
     except http_client.exceptions.RequestException:
-        pass  # Go API not up yet — start with empty cache
+        pass
     for e in elevators:
         e["_city"] = extract_city(e.get("location", ""))
     return elevators
@@ -86,7 +126,6 @@ STATUSES   = sorted({e["license_status"] for e in _ELEVATORS if e.get("license_s
 
 
 def _ensure_cache():
-    """If the cache loaded empty at startup, retry now. No-op when populated."""
     global _ELEVATORS, CITIES, STATUSES
     if _ELEVATORS:
         return
@@ -179,6 +218,42 @@ def build_rows(elevators):
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+@app.route("/debug-cache")
+def debug_cache():
+    import json as _json
+    try:
+        resp = http_client.get(f"{GO_API}/api/elevators", params={"page": 1, "limit": 1}, timeout=10)
+        api_status = resp.status_code
+        api_body = resp.text[:200]
+    except Exception as e:
+        api_status = "ERROR"
+        api_body = str(e)
+
+    db_status = "not set"
+    db_count  = None
+    db_url    = os.environ.get("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url)
+            cur  = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM elevators")
+            db_count  = cur.fetchone()[0]
+            cur.close(); conn.close()
+            db_status = "ok"
+        except Exception as e:
+            db_status = str(e)
+
+    return _json.dumps({
+        "GO_API":     GO_API,
+        "cache_size": len(_ELEVATORS),
+        "db_status":  db_status,
+        "db_count":   db_count,
+        "api_status": api_status,
+        "api_body":   api_body,
+    }), 200, {"Content-Type": "application/json"}
+
 
 @app.route("/")
 def index():
@@ -489,15 +564,57 @@ def elevator_detail(elevator_id):
 
 # ── Fleet health panel (Component 3) ─────────────────────────────────────────
 
+def _fleet_stats_from_db():
+    """Query fleet stats directly from PostgreSQL. Returns dict matching Go API shape."""
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT
+            (SELECT COUNT(*)                FROM elevators)    AS total_elevators,
+            (SELECT COUNT(*)                FROM inspections)  AS total_inspections,
+            (SELECT COUNT(*) FROM inspections
+             WHERE outcome IN ('Passed','Passed Major','Passed Sub',
+                               'All Orders Resolved','Complete'))  AS passed_inspections,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'high')   AS high_risk,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'medium') AS medium_risk,
+            (SELECT COUNT(*) FROM predictions WHERE risk_level = 'low')    AS low_risk,
+            (SELECT COUNT(*) FROM elevators e
+             WHERE NOT EXISTS (SELECT 1 FROM predictions p WHERE p.elevator_id = e.id)) AS unscored
+    """)
+    row = dict(cur.fetchone())
+    cur.close(); conn.close()
+    total = row["total_inspections"] or 1
+    return {
+        "total_elevators":      int(row["total_elevators"]),
+        "total_inspections":    int(row["total_inspections"]),
+        "inspection_pass_rate": round(int(row["passed_inspections"]) / total, 4),
+        "risk_levels": {
+            "high":     int(row["high_risk"]),
+            "medium":   int(row["medium_risk"]),
+            "low":      int(row["low_risk"]),
+            "unscored": int(row["unscored"]),
+        },
+    }
+
+
 @app.route("/fleet-health")
 def fleet_health():
-    try:
-        resp = http_client.get(f"{GO_API}/api/fleet/stats", timeout=3)
-        if resp.status_code != 200:
-            return _panel_error("Fleet Health"), 502
-        s = resp.json()
-    except http_client.exceptions.RequestException:
-        return _panel_error("Fleet Health"), 503
+    s = None
+    if os.environ.get("DATABASE_URL"):
+        try:
+            s = _fleet_stats_from_db()
+        except Exception:
+            pass
+    if s is None:
+        try:
+            resp = http_client.get(f"{GO_API}/api/fleet/stats", timeout=10)
+            if resp.status_code != 200:
+                return _panel_error("Fleet Health"), 502
+            s = resp.json()
+        except http_client.exceptions.RequestException:
+            return _panel_error("Fleet Health"), 503
 
     rl   = s.get("risk_levels") or {}
     high = rl.get("high", 0)
@@ -542,17 +659,53 @@ def fleet_health():
 
 # ── Alerts section (Component 4) ─────────────────────────────────────────────
 
+def _fleet_alerts_from_db(limit=20):
+    """Query high-risk alerts directly from PostgreSQL."""
+    import psycopg2
+    import psycopg2.extras
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur  = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cur.execute("""
+        SELECT
+            p.elevator_id,
+            p.risk_score,
+            TO_CHAR(li.latest_date, 'YYYY-MM-DD') AS last_inspection_date,
+            li.outcome                             AS last_inspection_outcome,
+            e.device_type                          AS equipment_type
+        FROM predictions p
+        JOIN elevators e ON e.id = p.elevator_id
+        LEFT JOIN LATERAL (
+            SELECT latest_date, outcome
+            FROM   inspections
+            WHERE  elevator_id = p.elevator_id
+            ORDER  BY latest_date DESC NULLS LAST
+            LIMIT  1
+        ) li ON true
+        WHERE p.risk_level = 'high'
+        ORDER BY p.risk_score DESC
+        LIMIT %s
+    """, (limit,))
+    rows = [dict(r) for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return rows
+
+
 @app.route("/fleet-alerts")
 def fleet_alerts():
-    try:
-        resp = http_client.get(f"{GO_API}/api/fleet/alerts", timeout=3)
-        if resp.status_code == 503:
+    alerts = None
+    if os.environ.get("DATABASE_URL"):
+        try:
+            alerts = _fleet_alerts_from_db()
+        except Exception:
+            pass
+    if alerts is None:
+        try:
+            resp = http_client.get(f"{GO_API}/api/fleet/alerts", timeout=10)
+            if resp.status_code not in (200,):
+                return _panel_error("Alerts"), 502
+            alerts = resp.json()
+        except http_client.exceptions.RequestException:
             return _panel_error("Alerts"), 503
-        if resp.status_code != 200:
-            return _panel_error("Alerts"), 502
-        alerts = resp.json()
-    except http_client.exceptions.RequestException:
-        return _panel_error("Alerts"), 503
 
     if not alerts:
         return (
@@ -600,6 +753,20 @@ def fleet_alerts():
   </div>
 </div>
 """
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat_proxy():
+    """Proxy chat requests from the browser to the Go API (which calls Ollama)."""
+    try:
+        resp = http_client.post(
+            f"{GO_API}/api/chat",
+            json=request.get_json(),
+            timeout=60,
+        )
+        return resp.content, resp.status_code, {"Content-Type": "application/json"}
+    except http_client.exceptions.RequestException as e:
+        return {"error": "chat service unavailable"}, 503
 
 
 if __name__ == "__main__":

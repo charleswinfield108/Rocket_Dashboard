@@ -13,6 +13,13 @@ Rocket Dash is a static prototype dashboard created to present Rocket Elevators'
 | `data/` | Datasets |
 | `docs/` | Specs and reports |
 
+## Links
+
+| Resource | URL |
+|----------|-----|
+| Live Dashboard | https://rocketdash-dashboard.onrender.com |
+| Trello Board (AND-106) | https://trello.com/b/igMBXoG6/ricket-elevators-and-106-chatbot |
+
 ## Commit Description
 
 The first commit after the initial commit (`81b206b`) added the AI workflow baseline document to the `docs/` directory. This document captured a structured self-assessment of the developer's current AI toolset and workflow habits at the outset of the project. It covered which AI tools are in use (Claude Code, ChatGPT, Copilot, and Gemini), the specific use case for each, what a typical AI-assisted work session looks like, what is working well in the current approach, and what friction points exist. The purpose was to establish a baseline snapshot of AI usage practices before the project began, providing a reference point for evaluating how those practices evolve over the course of development.

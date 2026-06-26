@@ -1,0 +1,29 @@
+[project]
+name = "rocket-elevators-mcp"
+version = "0.1.0"
+description = "MCP server providing tool access to the Rocket Elevators data layer"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0",
+    "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.1",
+    "chromadb>=0.5",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+mcp-server = "server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tools*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

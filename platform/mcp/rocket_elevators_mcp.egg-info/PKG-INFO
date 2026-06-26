@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: rocket-elevators-mcp
+Version: 0.1.0
+Summary: MCP server providing tool access to the Rocket Elevators data layer
+Requires-Python: >=3.10
+Requires-Dist: mcp[cli]>=1.0
+Requires-Dist: psycopg[binary]>=3.1
+Requires-Dist: psycopg-pool>=3.1
+Requires-Dist: chromadb>=0.5
+Requires-Dist: python-dotenv>=1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"

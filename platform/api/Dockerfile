@@ -26,6 +26,7 @@ WORKDIR /app
 
 # Binary from builder — no Go toolchain included.
 COPY --from=builder /build/api_server .
+COPY platform/api/prompts/ ./prompts/
 
 # CSV datasets the server loads at startup.
 # DATA_DIR tells the binary where to find them (overrides the default ../../data

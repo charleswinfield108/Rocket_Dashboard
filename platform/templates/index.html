@@ -318,7 +318,120 @@
     document.getElementById("headerDate").textContent =
       "Rocket Dashboard — " +
       new Date().toLocaleDateString("en-CA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+    // ── Chat widget ───────────────────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", function() {
+    const chatToggle  = document.getElementById("chat-toggle");
+    const chatPanel   = document.getElementById("chat-panel");
+    const chatClose   = document.getElementById("chat-close");
+    const chatInput   = document.getElementById("chat-input");
+    const chatSend    = document.getElementById("chat-send");
+    const chatMessages = document.getElementById("chat-messages");
+
+    let chatHistory = [];
+
+    chatToggle.addEventListener("click", () => {
+      chatPanel.classList.toggle("hidden");
+      if (!chatPanel.classList.contains("hidden")) chatInput.focus();
+    });
+    chatClose.addEventListener("click", () => chatPanel.classList.add("hidden"));
+
+    function appendMessage(role, text) {
+      const isUser = role === "user";
+      const div = document.createElement("div");
+      div.className = isUser
+        ? "flex justify-end"
+        : "flex justify-start";
+      div.innerHTML = `<div class="max-w-[80%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+        isUser ? "bg-blue-600 text-white rounded-br-none" : "bg-gray-100 text-gray-800 rounded-bl-none"
+      }">${text.replace(/\n/g, "<br>")}</div>`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    async function sendMessage() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = "";
+      chatSend.disabled = true;
+
+      appendMessage("user", text);
+
+      const thinking = document.createElement("div");
+      thinking.className = "flex justify-start";
+      thinking.innerHTML = `<div class="bg-gray-100 text-gray-400 text-sm px-3 py-2 rounded-xl rounded-bl-none italic">REMI is thinking…</div>`;
+      chatMessages.appendChild(thinking);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({ message: text, history: chatHistory })
+        });
+        const data = await res.json();
+        const reply = data.reply || "Sorry, I couldn't get a response.";
+        chatHistory.push({ role: "user", content: text });
+        chatHistory.push({ role: "assistant", content: reply });
+        thinking.remove();
+        appendMessage("assistant", reply);
+      } catch {
+        thinking.remove();
+        appendMessage("assistant", "Connection error — please try again.");
+      }
+      chatSend.disabled = false;
+      chatInput.focus();
+    }
+
+    chatSend.addEventListener("click", sendMessage);
+    chatInput.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    }); // end DOMContentLoaded
   </script>
+
+  <!-- ── Chat widget UI ──────────────────────────────────────────────────── -->
+  <button id="chat-toggle"
+    class="fixed bottom-6 right-6 z-50 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg transition-colors">
+    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M8 10h.01M12 10h.01M16 10h.01M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z"/>
+    </svg>
+  </button>
+
+  <div id="chat-panel"
+    class="hidden fixed bottom-24 right-6 z-50 w-80 bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
+    style="height:420px">
+    <!-- header -->
+    <div class="flex items-center justify-between px-4 py-3 bg-blue-600 text-white">
+      <div>
+        <p class="font-semibold text-sm">REMI</p>
+        <p class="text-xs text-blue-200">Elevator Operations Assistant</p>
+      </div>
+      <button id="chat-close" class="text-blue-200 hover:text-white transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+    <!-- messages -->
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-3 py-3 space-y-2 bg-white">
+      <div class="flex justify-start">
+        <div class="bg-gray-100 text-gray-800 text-sm px-3 py-2 rounded-xl rounded-bl-none max-w-[85%] leading-relaxed">
+          Hi, I'm REMI. Ask me anything about elevator operations, inspections, or compliance.
+        </div>
+      </div>
+    </div>
+    <!-- input -->
+    <div class="px-3 py-2 border-t border-gray-100 flex gap-2 bg-white">
+      <input id="chat-input" type="text" placeholder="Ask REMI…"
+        class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <button id="chat-send"
+        class="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg px-3 py-2 transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+        </svg>
+      </button>
+    </div>
+  </div>
 
 </body>
 </html>

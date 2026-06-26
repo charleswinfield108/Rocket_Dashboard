@@ -5,6 +5,8 @@
 !platform/api/*.go
 !platform/api/go.mod
 !platform/api/go.sum
+!platform/api/prompts/
+!platform/api/prompts/**
 
 # CSV/JSON data files the API reads at startup
 !data/*.csv
