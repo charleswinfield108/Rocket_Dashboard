@@ -17,16 +17,23 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 from tools.ping import ping
+from tools.elevators import (
+    list_tssa_shutdown_elevators,
+    get_inspection_history,
+    count_incidents,
+    get_incidents_for_elevator,
+    list_followup_elevators,
+)
 
 load_dotenv()  # no-op if .env is absent (e.g. on Render)
 
 mcp = FastMCP("rocket-elevators-mcp")
 mcp.add_tool(ping)
-
-# ── Register additional tools here as the sprint progresses ──────────────────
-# from tools.elevators import get_elevator, list_shutdowns, inspection_history
-# mcp.add_tool(get_elevator)
-# ...
+mcp.add_tool(list_tssa_shutdown_elevators)
+mcp.add_tool(get_inspection_history)
+mcp.add_tool(count_incidents)
+mcp.add_tool(get_incidents_for_elevator)
+mcp.add_tool(list_followup_elevators)
 
 
 def main() -> None:
