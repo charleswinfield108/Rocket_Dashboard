@@ -9,6 +9,9 @@ dependencies = [
     "psycopg-pool>=3.1",
     "chromadb>=0.5",
     "python-dotenv>=1.0",
+    "pypdf>=4.0",
+    "sentence-transformers>=2.7",
+    "fpdf2>=2.7",
 ]
 
 [project.optional-dependencies]
