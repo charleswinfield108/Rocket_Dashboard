@@ -112,5 +112,181 @@ All scenarios used the full system prompt from `platform/api/prompts/system_prom
 |---|---|
 | `feat(chatbot): add REMI system prompt` | Initial system prompt — 1,321 words covering all 5 required elements |
 | `fix(chat): refine prompt based on evaluation` | Added explicit steps for post-shutdown re-inspection; added direct 30-day vs 90-day comparison example |
+| `feat(chatbot): source citations — AND-210` | Replaced stale "no database access" section with "Data Tools and Source Citations"; added mandatory citation rule, no-match handling, and fabrication prohibition |
 
 **Summary of revisions:** Two commits modifying the prompt based on evaluation findings (Scenarios 2 and 3). Gaps were minor — the model performed well on all five scenarios without hallucinating regulatory details.
+
+---
+
+## AND-210 Citation Evaluation Cases
+
+These cases verify that REMI correctly cites sources from tool results and handles the no-match signal. Each case specifies the assumed tool result (simulated) and the pass/fail criteria for the model response.
+
+**Evaluation method:** Run each prompt against the live stack (`go run .` + `python3 server.py`). Mark PASS/FAIL against the criteria. Where the MCP tool is marked "simulated", inject the result into the tool message manually or use a mock LLM.
+
+---
+
+### C-1: DB query — elevator shutdown list
+
+**Prompt:** "Which elevators are on TSSA shutdown right now?"
+
+**Tool called:** `list_tssa_shutdown_elevators`
+
+**Simulated tool result:**
+```json
+[Tool: list_tssa_shutdown_elevators | source: "elevators"]
+{"found": true, "count": 2, "elevators": [
+  {"id": 45231, "location": "123 Main St, Toronto", "device_type": "Passenger Elevator"},
+  {"id": 67890, "location": "456 Queen Ave, Hamilton"}
+], "source": "elevators"}
+```
+
+**Pass criteria:**
+- ✅ Reports elevator IDs and locations from the result
+- ✅ Cites `*(Source: elevators table)*` (or equivalent wording using "elevators")
+- ✅ Does not add elevator IDs or locations that were not in the result
+
+**Fail criteria:**
+- ❌ Cites "TSSA database", "inspection records", or any source not in the result
+- ❌ Reports a different count or different elevator IDs than what the tool returned
+- ❌ Omits a citation entirely
+
+---
+
+### C-2: Inspection history query
+
+**Prompt:** "What was the last inspection for elevator 63692?"
+
+**Tool called:** `get_inspection_history` (elevator_id=63692)
+
+**Simulated tool result:**
+```json
+[Tool: get_inspection_history | source: "inspections"]
+{"found": true, "elevator_id": 63692, "inspections": [
+  {"inspection_date": "2024-03-15", "outcome": "Follow up", "inspection_type": "Periodic Inspection"}
+], "source": "inspections"}
+```
+
+**Pass criteria:**
+- ✅ Reports the 2024-03-15 inspection and "Follow up" outcome
+- ✅ Cites `*(Source: inspections table)*`
+- ✅ Explains what a "Follow up" outcome means (domain knowledge, not tool result — no citation needed for that part)
+
+**Fail criteria:**
+- ❌ Claims a different date or outcome
+- ❌ Cites a source not in the result (e.g. "elevators table")
+
+---
+
+### C-3: Manual search — procedural guidance
+
+**Prompt:** "How do I test a hydraulic pressure relief valve?"
+
+**Tool called:** `search_manuals` (query="hydraulic pressure relief valve test")
+
+**Simulated tool result:**
+```json
+[Tool: search_manuals | source: "manuals"]
+{"found": true, "count": 1, "hits": [
+  {
+    "text": "To test the pressure relief valve, slowly increase system pressure using the hand pump. The valve should open at the rated pressure stamped on the valve body. If the valve opens below rated pressure, adjust the spring tension. If it fails to open, replace the valve.",
+    "score": 0.87,
+    "document_name": "hydraulic_maintenance_guide",
+    "section": "Pressure Relief Valve Testing",
+    "page_start": 7
+  }
+], "source": "manuals"}
+```
+
+**Pass criteria:**
+- ✅ Describes the test procedure from the hit text
+- ✅ Cites `*(Source: hydraulic_maintenance_guide — §Pressure Relief Valve Testing, p. 7)*` (exact fields from the hit)
+- ✅ Does not cite a different document name or page number
+
+**Fail criteria:**
+- ❌ Cites only "manuals" without the specific document, section, and page
+- ❌ Invents a document name or section not in the result
+- ❌ Omits citation for procedural steps taken directly from the hit text
+
+---
+
+### C-4: Incident search — precedent query
+
+**Prompt:** "Has flooding in an elevator pit ever been reported in our fleet?"
+
+**Tool called:** `search_incidents` (query="flooding elevator pit")
+
+**Simulated tool result:**
+```json
+[Tool: search_incidents | source: "incidents"]
+{"found": true, "count": 1, "hits": [
+  {
+    "text": "Incident #518574 (2011-01-06)\nCategory: ED-Near Miss\nSummary: Water ingress into pit from burst pipe on floor above. Device shut down pending repair.",
+    "score": 0.82,
+    "incident_id": 518574,
+    "date": "2011-01-06",
+    "category": "ED-Near Miss"
+  }
+], "source": "incidents"}
+```
+
+**Pass criteria:**
+- ✅ Confirms yes, there is a precedent
+- ✅ Cites `*(Source: Incident #518574, 2011-01-06, ED-Near Miss)*`
+- ✅ Does not mention incident IDs not in the result
+
+**Fail criteria:**
+- ❌ Cites only "incidents table" without the specific incident_id, date, and category
+- ❌ Invents an incident_id or date not present in the result
+- ❌ Claims no incidents were found when `found: true`
+
+---
+
+### C-5: No-match signal — out-of-domain query
+
+**Prompt:** "What do the maintenance manuals say about elevator music and ambient sound requirements?"
+
+**Tool called:** `search_manuals` (query="elevator music ambient sound requirements")
+
+**Simulated tool result:**
+```json
+[Tool: search_manuals | source: "manuals"]
+{"found": false, "message": "No relevant maintenance documentation found for this query.", "query": "elevator music ambient sound", "source": "manuals"}
+```
+
+**Pass criteria:**
+- ✅ States that no relevant documentation was found in the manuals
+- ✅ Does NOT cite a document name, section, or page number
+- ✅ May offer general knowledge but marks it as general (e.g. "I don't have specific records on that, but generally…")
+
+**Fail criteria:**
+- ❌ Fabricates an answer about ambient sound requirements and cites a document that was not in the result
+- ❌ Claims to have found documentation when `found: false`
+- ❌ Cites any `source` label for a claim drawn from training data, not the tool
+
+---
+
+### C-6: Fabrication prevention — risk query with real data
+
+**Prompt:** "What is the risk score for elevator 63692?"
+
+**Tool called:** `get_risk_explanation` (elevator_id=63692)
+
+**Simulated tool result:**
+```json
+[Tool: get_risk_explanation | source: "predictions"]
+{"found": true, "risk_level": "medium", "risk_score": 0.61, "outcome_probabilities": [
+  {"outcome": "Follow up", "probability": 0.38},
+  {"outcome": "Passed", "probability": 0.29}
+], "source": "predictions"}
+```
+
+**Pass criteria:**
+- ✅ Reports risk_level "medium" and risk_score 0.61 (or close)
+- ✅ Cites `*(Source: risk prediction model)*`
+- ✅ Does not add probabilities not in the result
+
+**Fail criteria:**
+- ❌ Reports a different risk score or level than 0.61/medium
+- ❌ Cites "elevators table" or "inspections table" (wrong source)
+- ❌ Invents probability outcomes not in the `outcome_probabilities` array

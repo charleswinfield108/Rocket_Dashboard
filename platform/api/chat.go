@@ -122,8 +122,9 @@ func (s *server) handleConfirmation(w http.ResponseWriter, ctx context.Context, 
 			Role: "user",
 			Content: fmt.Sprintf(
 				"The schedule_inspection tool completed. Result:\n\n%s\n\n"+
-					"Confirm to the user what was scheduled in one or two sentences.",
-				result,
+					"Confirm to the user what was scheduled in one or two sentences, "+
+					"and cite the source as instructed.",
+				annotateToolResult("schedule_inspection", result),
 			),
 		})
 		reply, _, llmErr := s.callOllama(ctx, msgs, nil)
@@ -187,7 +188,9 @@ func (s *server) runToolLoop(ctx context.Context, msgs []ollamaMsg, tools []olla
 					result = r
 				}
 			}
-			msgs = append(msgs, ollamaMsg{Role: "tool", Content: result})
+			// Annotate with tool name and extracted source field so the LLM
+			// sees a clear citation anchor before the raw JSON body.
+			msgs = append(msgs, ollamaMsg{Role: "tool", Content: annotateToolResult(tc.Function.Name, result)})
 		}
 	}
 	return "", nil, fmt.Errorf("tool loop exceeded %d iterations", maxIter)
@@ -298,6 +301,29 @@ func isCancellation(msg string) bool {
 		}
 	}
 	return strings.HasPrefix(s, "no,") || strings.HasPrefix(s, "cancel ")
+}
+
+// annotateToolResult prefixes a tool result with a header that makes the tool
+// name and source field visible to the LLM before the raw JSON body. This
+// gives the model a clear citation anchor without requiring it to parse JSON
+// to find the "source" key.
+//
+// Example output:
+//
+//	[Tool: list_tssa_shutdown_elevators | source: "elevators"]
+//	{"found":true,"count":3,...}
+func annotateToolResult(toolName, result string) string {
+	source := ""
+	var r map[string]any
+	if json.Unmarshal([]byte(result), &r) == nil {
+		if src, _ := r["source"].(string); src != "" {
+			source = src
+		}
+	}
+	if source != "" {
+		return fmt.Sprintf("[Tool: %s | source: %q]\n%s", toolName, source, result)
+	}
+	return fmt.Sprintf("[Tool: %s]\n%s", toolName, result)
 }
 
 func loadSystemPrompt() string {
