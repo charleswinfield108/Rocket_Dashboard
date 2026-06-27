@@ -54,6 +54,11 @@ type server struct {
 	// ordersByInsp keyed by InspectionNumber; ordersByElev by ElevatingDevicesNumber.
 	ordersByInsp map[int][]*orderRow
 	ordersByElev map[int][]*orderRow
+
+	// mcp is the MCP client connected to the Python tool server.
+	// nil when the Python server is not available (graceful degradation — chat still
+	// works but the LLM has no tools to call).
+	mcp MCPClient
 }
 
 func (s *server) routes() http.Handler {
@@ -100,6 +105,14 @@ func main() {
 		log.Fatalf("loading order.csv: %v", err)
 	}
 	log.Printf("loaded: %d order groups from order.csv", len(srv.ordersByElev))
+
+	mcpClient, mcpErr := newStdioMCPClient(mcpServerDir(), mcpPython())
+	if mcpErr != nil {
+		log.Printf("WARNING: MCP server not available (%v) — chat will run without tools", mcpErr)
+	} else {
+		srv.mcp = mcpClient
+		defer mcpClient.Close()
+	}
 
 	addr := fmt.Sprintf(":%s", cfg.port)
 	log.Printf("elevator fleet API listening on %s (data: %s)", addr, cfg.dataDir)

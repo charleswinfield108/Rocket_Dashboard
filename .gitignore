@@ -8,3 +8,7 @@ platform/api/api_server
 # Python bytecode caches
 **/__pycache__/
 *.pyc
+platform/mcp/rocket_elevators_mcp.egg-info/
+
+# ChromaDB on-disk store (rebuilt by ingest.py)
+platform/mcp/rag/chroma_data/
